@@ -1,0 +1,10 @@
+
+script*
+.vscode/
+*.pyc
+
+artifacts/
+lightning_logs/
+
+*yaml
+!environment.yaml
