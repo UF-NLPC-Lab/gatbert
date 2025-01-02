@@ -1,0 +1,16 @@
+name: gatbert
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pip
+  - ipykernel
+  - pandas
+  - pytorch
+  - torchmetrics
+  - transformers
+  - lightning
+  - pip:
+    - jsonargparse[signatures]
