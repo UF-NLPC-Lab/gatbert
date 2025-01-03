@@ -27,3 +27,8 @@ See https://huggingface.co/textattack/roberta-base-MNLI
 """
 
 DEFAULT_BATCH_SIZE = 4
+
+NUM_FAKE_NODES = 1000
+"""
+Used for dummy routines testing graph logic
+"""
