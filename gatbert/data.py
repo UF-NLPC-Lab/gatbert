@@ -3,12 +3,13 @@ from __future__ import annotations
 import csv
 from typing import Optional, Dict, Any, Generator, List
 import dataclasses
+import pdb
 # 3rd Party
 import torch
 from transformers import PreTrainedTokenizerFast
 from tokenizers.pre_tokenizers import PreTokenizer
 # Local
-from .constants import Stance
+from .constants import Stance, NodeType, DummyRelationType
 from .graph import make_fake_kb_links
 
 
@@ -57,24 +58,25 @@ def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreT
             pre_target = [pair[0] for pair in pretokenizer.pre_tokenize_str(target)]
             result = tokenizer(text=pre_target, text_pair=pre_context, is_split_into_words=True, return_tensors='pt')
         else:
-            result = tokenizer(text=target, text_pair=context)
+            result = tokenizer(text=target, text_pair=context, return_tensors='pt')
 
         result = {k: torch.squeeze(v) for (k, v) in result.items()}
         n_text_nodes = len(result['input_ids'])
 
         edge_ids = []
         for head in range(n_text_nodes):
-            edge_ids.append( (head, head, 0) )
+            edge_ids.append( (head, head, 0, NodeType.TOKEN.value, NodeType.TOKEN.value) )
             for tail in range(head + 1, n_text_nodes):
-                edge_ids.append( (head, tail, 0) )
-                edge_ids.append( (tail, head, 0) )
+                edge_ids.append( (head, tail, 0, NodeType.TOKEN.value, NodeType.TOKEN.value) )
+                edge_ids.append( (tail, head, 0, NodeType.TOKEN.value, NodeType.TOKEN.value) )
 
         kb_edges, result['kb_ids'] = make_fake_kb_links(n_text_nodes)
         edge_ids.extend(kb_edges)
 
         edge_ids.sort()
+        # pdb.set_trace()
         sparse_ids = torch.tensor(edge_ids).transpose(1, 0)
-        result['edges'] = sparse_ids
+        result['edge_indices'] = sparse_ids
         result['stance'] = torch.tensor(stance)
 
         return result
@@ -94,11 +96,11 @@ def make_collate_fn(tokenizer):
         batched['stance'] = torch.stack([s['stance'] for s in samples], dim=0)
 
         batch_edges = []
-        for (i, sample_edges) in enumerate(map(lambda s: s['edges'], samples)):
+        for (i, sample_edges) in enumerate(map(lambda s: s['edge_indices'], samples)):
             batch_edges.append(torch.concatenate([
                 torch.full(size=(1, sample_edges.shape[1]), fill_value=i),
                 sample_edges
             ]))
-        batched['edges'] = torch.concatenate(batch_edges, dim=-1)
+        batched['edge_indices'] = torch.concatenate(batch_edges, dim=-1)
         return batched
     return collate_fn

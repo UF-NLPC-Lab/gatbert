@@ -15,6 +15,24 @@ class Stance(enum.Enum):
     AGAINST = 1
     FAVOR = 2
 
+# TODO: Should I make 
+@enum.unique
+class NodeType(enum.Enum):
+    PADDING = 0
+    TOKEN = 1
+    KB = 2
+
+@enum.unique
+class DummyRelationType(enum.Enum):
+    """
+    Fake relations to use when debugging
+    """
+    PADDING = 0
+    TOKEN_TOKEN = 1
+    TOKEN_KB = 2
+    KB_TOKEN = 3
+    KB_KB = 4
+
 ENCODED_FIELDS = {
     "stance",
     "input_ids",
@@ -24,6 +42,11 @@ ENCODED_FIELDS = {
 DEFAULT_MODEL = "textattack/roberta-base-MNLI"
 """
 See https://huggingface.co/textattack/roberta-base-MNLI
+"""
+
+NODE_PAD_ID = 0
+"""
+Padding ID to use when batches of nodes to equal sizes.
 """
 
 DEFAULT_BATCH_SIZE = 4
