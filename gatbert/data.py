@@ -29,7 +29,7 @@ class MapDataset(torch.utils.data.Dataset):
         return MapDataset(list(map(f, self.__samples)))
 
     def __init__(self, samples):
-        self.__samples = samples
+        self.__samples = list(samples)
     def __getitem__(self, key):
         return self.__samples[key]
     def __len__(self):
@@ -46,7 +46,7 @@ def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     with open(csv_path, 'r', encoding='latin-1') as r:
         yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']]), csv.DictReader(r))
 
-def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreTokenizer] = None):
+def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreTokenizer] = None, add_fake_edges=False):
 
     def encode_sample(sample: Sample):
         context = sample.context
@@ -70,8 +70,11 @@ def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreT
                 edge_ids.append( (head, tail, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
                 edge_ids.append( (tail, head, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
 
-        kb_edges, result['kb_ids'] = make_fake_kb_links(n_text_nodes)
-        edge_ids.extend(kb_edges)
+        if add_fake_edges:
+            kb_edges, result['kb_ids'] = make_fake_kb_links(n_text_nodes)
+            edge_ids.extend(kb_edges)
+        else:
+            result['kb_ids'] = torch.tensor([], dtype=torch.int64)
 
         edge_ids.sort()
         sparse_ids = torch.tensor(edge_ids).transpose(1, 0)
