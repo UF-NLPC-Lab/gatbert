@@ -65,16 +65,15 @@ def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreT
 
         edge_ids = []
         for head in range(n_text_nodes):
-            edge_ids.append( (head, head, 0, NodeType.TOKEN.value, NodeType.TOKEN.value) )
+            edge_ids.append( (head, head, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
             for tail in range(head + 1, n_text_nodes):
-                edge_ids.append( (head, tail, 0, NodeType.TOKEN.value, NodeType.TOKEN.value) )
-                edge_ids.append( (tail, head, 0, NodeType.TOKEN.value, NodeType.TOKEN.value) )
+                edge_ids.append( (head, tail, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
+                edge_ids.append( (tail, head, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
 
         kb_edges, result['kb_ids'] = make_fake_kb_links(n_text_nodes)
         edge_ids.extend(kb_edges)
 
         edge_ids.sort()
-        # pdb.set_trace()
         sparse_ids = torch.tensor(edge_ids).transpose(1, 0)
         result['edge_indices'] = sparse_ids
         result['stance'] = torch.tensor(stance)
