@@ -1,20 +1,26 @@
 # STL
-
+from typing import Literal
 # 3rd Party
 import torch
+import lightning as L
 from transformers import BertModel
 # Local
-from .constants import NODE_PAD_ID, NodeType
+from .constants import NODE_PAD_ID, NodeType, Stance
 from .rgat_layer import RGATLayer
 
+class StanceModule(L.LightningModule):
+    def configure_optimizers(self):
+        return torch.optim.Adam()
 
-class GATBert(torch.nn.Module):
+
+class GATBert(StanceModule):
     def __init__(self,
                  pretrained_model: str,
                  n_relations: int,
                  n_kb_nodes: int,
-                 n_classes: int,
+                 n_heads: int = 6,
                  n_bases: int = 20,
+                 attention_mode: Literal['wirgat', 'argat'] = 'wirgat'
                  ):
         """
         Args:
@@ -24,10 +30,14 @@ class GATBert(torch.nn.Module):
         Relation 0 represents token-to-token
         """
         super().__init__()
+        self.save_hyperparameters()
         self.__n_relations = n_relations
         self.__bert_model = BertModel.from_pretrained(pretrained_model)
         self.__feature_size: int = self.__bert_model.config.hidden_size
-        self.__n_classes = n_classes
+        self.__n_classes = len(Stance)
+        self.__n_heads = n_heads
+        self.__n_bases = n_bases
+        self.__attention_mode = attention_mode
 
         self.__pad_token_id: int = self.__bert_model.config.pad_token_id
 
@@ -41,10 +51,10 @@ class GATBert(torch.nn.Module):
             in_features=self.__feature_size,
             attention_units=self.__feature_size,
             out_features=self.__feature_size,
-            n_heads=6,
+            n_heads=self.__n_heads,
             n_relations=self.__n_relations,
-            n_bases=n_bases,
-            attention_mode='wirgat'
+            n_bases=self.__n_bases,
+            attention_mode=self.__attention_mode
         )
 
         self.__projection = torch.nn.Linear(self.__feature_size, self.__n_classes)
