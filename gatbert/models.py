@@ -3,7 +3,7 @@ from typing import Literal
 # 3rd Party
 import torch
 import lightning as L
-from transformers import BertModel
+from transformers import AutoModel
 # Local
 from .f1_calc import F1Calc
 from .constants import NODE_PAD_ID, NodeType, Stance, DEFAULT_MODEL
@@ -15,7 +15,6 @@ class StanceModule(L.LightningModule):
 
         self.__ce = torch.nn.CrossEntropyLoss()
         self.__calc = F1Calc()
-        self.__enhanced_calc = F1Calc()
 
     def configure_optimizers(self):
         return torch.optim.Adam()
@@ -38,13 +37,11 @@ class StanceModule(L.LightningModule):
 
     def __eval_step(self, batch, batch_idx):
         labels = batch.pop('stance').view(-1)
-        self.__calc.record(self._predict_from_encodings(self.encode(batch)), labels)
-        if self.hparams.sense_train:
-            self.__enhanced_calc.record(self._predict_from_encodings(self.encode_enhanced(batch)), labels)
+        logits = self(**batch)
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        self.__calc.record(probs, labels)
     def __eval_finish(self, stage):
         self.__log_stats(self.__calc, f"{stage}")
-        if self.hparams.sense_train:
-            self.__log_stats(self.__enhanced_calc, f"{stage}_enhanced")
     def __log_stats(self, calc: F1Calc, prefix):
         calc.summarize()
         self.log(f"{prefix}_favor_precision", calc.favor_precision)
@@ -75,7 +72,7 @@ class GATBert(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.__n_relations = n_relations
-        self.__bert_model = BertModel.from_pretrained(pretrained_model)
+        self.__bert_model = AutoModel.from_pretrained(pretrained_model)
         self.__feature_size: int = self.__bert_model.config.hidden_size
         self.__n_classes = len(Stance)
         self.__n_heads = n_heads
@@ -141,7 +138,7 @@ class GATBert(StanceModule):
 
         # Pack the features from tokens and external KB nodes together into one feature map
         # All features are zero by default
-        node_features = torch.zeros([input_ids.shape[0], max_graph_size, self.__feature_size])
+        node_features = torch.zeros([input_ids.shape[0], max_graph_size, self.__feature_size], device=bert_encodings.device)
         # The first nodes' features should be from tokens
         batch_token_indices, token_indices = torch.where(not_token_padding)
         node_features[batch_token_indices, token_indices] = bert_encodings[batch_token_indices, token_indices]
@@ -166,7 +163,8 @@ class GATBert(StanceModule):
             indices=edge_indices[:4],
             values=torch.ones(edge_indices.shape[1]),
             size=(input_ids.shape[0], max_graph_size, max_graph_size, self.__n_relations),
-            is_coalesced=True
+            is_coalesced=True,
+            device=edge_indices.device
         )
 
         last_node_states = self.__rgat(node_features, edges_tensor)

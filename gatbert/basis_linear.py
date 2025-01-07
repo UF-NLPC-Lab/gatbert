@@ -26,8 +26,9 @@ class BasisLinear(torch.nn.Module):
                 matched_dims.insert(0, proj_dim)
         self.__matched_dims = matched_dims
 
-        # We could do one layer with stacked weight matrices, but that will also affect the fan-in values for the Xavier initializer...
-        self.__bases = [torch.nn.Linear(self.__in_features[-1], self.__out_features, bias=False) for _ in range(n_bases)]
+        # TODO: Investigate whether it's a good thing that we treat this as one big transformation with a bigger fanout
+        # (as far as Xavier initialization is concerned)
+        self.__bases = torch.nn.Linear(self.__in_features[-1], self.__out_features * n_bases, bias=False)
 
         # (O, num_bases)
         coefficient_data = torch.empty(*self.__n_projections, self.__n_bases)
@@ -48,9 +49,9 @@ class BasisLinear(torch.nn.Module):
         """
         assert tuple(x.shape[-len(self.__in_features):]) == self.__in_features
 
-        # TODO: Could do this with a single linear layer--more efficient
+        basis_output = self.__bases(x)
         # (*leading_x_dims, num_bases, out_features)
-        basis_vecs = torch.stack([basis(x) for basis in self.__bases], dim=-2)
+        basis_vecs = basis_output.view(*basis_output.shape[:-1], self.__n_bases, self.__out_features)
 
         basis_shape = (
             *(x.shape[:-len(self.__matched_dims) - 1]),

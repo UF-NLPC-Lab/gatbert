@@ -76,7 +76,9 @@ class RGATLayer(torch.nn.Module):
         if self.__attention_mode == 'wirgat':
             sparse_logits = torch.sparse_coo_tensor(
                 indices=edge_indices, values=logits,
-                size=(batch_size, n_nodes, n_nodes, self.__n_relations, self.__n_heads)
+                size=(batch_size, n_nodes, n_nodes, self.__n_relations, self.__n_heads),
+                requires_grad=True,
+                device=logits.device
             )
             # Compute a separate probability distribution for each relation
             sparse_attention = torch.sparse.softmax(sparse_logits, dim=-3)
@@ -91,7 +93,8 @@ class RGATLayer(torch.nn.Module):
             sparse_logits = torch.sparse_coo_tensor(
                 indices=mask_indices, values=logits,
                 size=(batch_size, n_nodes, n_nodes * self.__n_relations, self.__n_heads),
-                requires_grad=True
+                requires_grad=True,
+                device=logits.device
             )
             sparse_attention = torch.sparse.softmax(sparse_logits, dim=-2)
             # Validate probability distributions
@@ -108,10 +111,10 @@ class RGATLayer(torch.nn.Module):
 
         # (batch_size*source_nodes, edges)
         edge_mask = torch.sparse_coo_tensor(
-            indices=torch.stack([edge_indices[0]*n_nodes + edge_indices[1], torch.arange(edge_indices.shape[1])]),
+            indices=torch.stack([edge_indices[0]*n_nodes + edge_indices[1], torch.arange(edge_indices.shape[1], device=edge_indices.device)]),
             values=torch.ones(edge_indices.shape[1]),
             size=(batch_size * n_nodes, edge_indices.shape[1]),
-            check_invariants=True
+            device=edge_indices.device
         )
 
         # (batch_size * source_nodes, out_features)

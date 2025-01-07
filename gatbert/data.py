@@ -91,7 +91,8 @@ def make_collate_fn(tokenizer):
     def collate_fn(samples: List[Dict[str, Any]]):
         batched = {}
         batched['input_ids'] = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples], batch_first=True, padding_value=token_padding)
-        batched['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([s['token_type_ids'] for s in samples], batch_first=True, padding_value=type_padding)
+        if "token_type_ids" in samples[0]:
+            batched['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([s['token_type_ids'] for s in samples], batch_first=True, padding_value=type_padding)
         batched['kb_ids'] = torch.nn.utils.rnn.pad_sequence([s['kb_ids'] for s in samples], batch_first=True, padding_value=0)
 
         batched['attention_mask'] = batched['input_ids'] != token_padding

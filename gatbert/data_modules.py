@@ -20,7 +20,7 @@ class StanceDataModule(L.LightningDataModule):
 
         tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.pretrained_model, use_fast=True)
         # Protected variables
-        self._encoder = make_encoder(tokenizer_model, pretokenizer=BertPreTokenizer())
+        self._encoder = make_encoder(tokenizer_model)
         self._collate_fn = make_collate_fn(tokenizer_model)
 
     # Protected Methods
