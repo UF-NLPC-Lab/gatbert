@@ -86,10 +86,10 @@ def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreT
     return encode_sample
 
 def make_collate_fn(tokenizer):
+    token_padding = tokenizer.pad_token_id
+    type_padding = tokenizer.pad_token_type_id
     def collate_fn(samples: List[Dict[str, Any]]):
         batched = {}
-        token_padding = tokenizer.pad_token_id
-        type_padding = tokenizer.pad_token_type_id
         batched['input_ids'] = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples], batch_first=True, padding_value=token_padding)
         batched['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([s['token_type_ids'] for s in samples], batch_first=True, padding_value=type_padding)
         batched['kb_ids'] = torch.nn.utils.rnn.pad_sequence([s['kb_ids'] for s in samples], batch_first=True, padding_value=0)
