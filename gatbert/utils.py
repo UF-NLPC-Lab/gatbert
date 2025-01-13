@@ -1,5 +1,6 @@
 from functools import reduce
 from typing import List, Any
+import time
 
 def flat_map(f, iterable) -> List[Any]:
     return reduce(lambda a,b: a + b, map(f, iterable), [])
@@ -19,3 +20,17 @@ def batched(iterable, n: int):
             batch = []
     if batch:
         yield batch
+
+class CumProf:
+    def __init__(self, func):
+        self.func = func
+        self.cumtime = 0
+        self.count = 0
+    def __call__(self, *args, **kwargs):
+        start = time.time()
+        rval = self.func(*args, **kwargs)
+        self.cumtime += (time.time() - start)
+        self.count += 1
+        return rval
+    def __str__(self):
+        return f"CumProf(cumtime={self.cumtime}, count={self.count})"
