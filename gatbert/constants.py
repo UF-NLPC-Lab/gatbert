@@ -64,6 +64,7 @@ class Relation:
     name: str
     directed: bool
 
+# (id, uri, is_directed) 
 __RAW_RELATIONS = [
     ( 0, "/r/Antonym",                   False),
     ( 1, "/r/AtLocation",                True) ,
@@ -116,17 +117,20 @@ __RAW_RELATIONS = [
     (48, "/r/dbpedia/occupation",        True) ,
     (49, "/r/dbpedia/product",           True) ,
 ]
+"""
+A raw copy of the ConceptNet relations, for convenience.
+"""
 
 PADDING_RELATION_ID = 0
 TOKEN_RELATION_ID = 1
 
-CN_RELATIONS: Dict[int, Relation] = {
+CN_RELATIONS = {
         orig_id: Relation(orig_id, internal_id, name, directed) 
         for (internal_id, (orig_id, name, directed)) in enumerate(__RAW_RELATIONS, start=2)
 }
 
-REV_RELATIONS: Dict[int, Relation] = {
+REV_RELATIONS = {
         orig_id: Relation(orig_id, internal_id, f"/reverse/{name}", directed) 
-        for (internal_id, (orig_id, name, directed)) in enumerate(filter(lambda r: r[2], __RAW_RELATIONS), start=len(RELATIONS)+3)
+        for (internal_id, (orig_id, name, directed)) in enumerate(filter(lambda r: r[2], __RAW_RELATIONS), start=len(CN_RELATIONS)+3)
 }
 

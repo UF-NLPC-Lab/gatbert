@@ -9,7 +9,7 @@ import functools
 # 3rd Party
 import psycopg2
 import psycopg2.extras
-from tokenizer.pre_tokenizers import BertPreTokenizer
+from tokenizers.pre_tokenizers import BertPreTokenizer
 # local
 from gatbert.data import Sample, parse_ez_stance
 from gatbert.constants import CN_RELATIONS, REV_RELATIONS
@@ -32,7 +32,7 @@ def generate_degree_column(conn):
 
                 curs.execute(out_degree_comm)
                 curs.execute(in_degree_comm)
-                curs.execute("ALTER TABLE nodes ADD COLUMN degree INTEGER GENERATED ALWAYS AS in_degree+out_degree")
+                curs.execute("ALTER TABLE nodes ADD COLUMN degree INTEGER GENERATED ALWAYS AS (in_degree + out_degree) STORED")
             except (Exception, psycopg2.DatabaseError) as err:
                 conn.rollback()
                 print(err)
@@ -76,6 +76,7 @@ def extract(conn, sample_gen, N=2):
             rel_obj = CN_RELATIONS[orig_id]
             edges.append( (start_id, end_id, rel_obj.internal_id) )
 
+            # Add the reverse edge if such an edge exist
             rev_rel_obj = REV_RELATIONS.get(orig_id)
             if rev_rel_obj:
                 edges.append( (end_id, start_id, rev_rel_obj.internal_id) )
@@ -124,7 +125,7 @@ def main(raw_args=None):
         print("Must select one of --ezstance, --vast, or --semeval", file=sys.stderr)
         sys.exit(1)
     if args.ezstance:
-        sample_gen = parse_ezstance(args.ezstance)
+        sample_gen = parse_ez_stance(args.ezstance)
     elif args.vast:
         raise RuntimeError("--vast not yet supported")
     else:
