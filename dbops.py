@@ -14,15 +14,10 @@ from tokenizer.pre_tokenizers import BertPreTokenizer
 from gatbert.data import Sample, parse_ez_stance
 from gatbert.constants import CN_RELATIONS, REV_RELATIONS
 
-# Assumes a concept5 postgres DB fully populated according to these instructions: https://github.com/commonsense/conceptnet5/wiki/Build-process
 
-conn = psycopg2.connect("dbname='conceptnet5'")
-conn.autocommit = False
-print(conn.autocommit, conn.isolation_level)
-
-sys.exit(1)
 
 def generate_degree_column(conn):
+    conn.autocommit = False
     with conn:
         with conn.cursor() as curs:
             try:
@@ -31,14 +26,12 @@ def generate_degree_column(conn):
                 curs.execute("ALTER TABLE nodes DROP COLUMN IF EXISTS in_degree")
                 curs.execute("ALTER TABLE nodes ADD COLUMN out_degree INTEGER DEFAULT 0")
                 curs.execute("ALTER TABLE nodes ADD COLUMN  in_degree INTEGER DEFAULT 0")
-                curs.execute("""update nodes n
-                                set out_degree = subquery.out_degree
-                                from (
-                                    select start_id as id,
-                                            count(*) as out_degree
-                                    from edges group by id
-                                ) as subquery
-                                where n.id = subquery.id;""")
+
+                out_degree_comm = "update nodes n set out_degree = subquery.out_degree from (select start_id as id, count(*) as out_degree from edges group by start_id) as subquery where n.id = subquery.id;"
+                in_degree_comm = "update nodes n set in_degree = subquery.in_degree from (select end_id as id, count(*) as in_degree from edges group by end_id) as subquery where n.id = subquery.id;"
+
+                curs.execute(out_degree_comm)
+                curs.execute(in_degree_comm)
                 curs.execute("ALTER TABLE nodes ADD COLUMN degree INTEGER GENERATED ALWAYS AS in_degree+out_degree")
             except (Exception, psycopg2.DatabaseError) as err:
                 conn.rollback()
@@ -121,6 +114,11 @@ def main(raw_args=None):
     parser.add_argument("--semeval",  type=str, required=True, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="File pretokenized stance samples, with graph nodes")
     args = parser.parse_arg(raw_args)
+
+    if args.gen_degree:
+        conn = psycopg2.connect("dbname='conceptnet5'")
+        generate_degree_column(conn)
+        return
 
     if not any([args.ezstance, args.vast, args.semeval]):
         print("Must select one of --ezstance, --vast, or --semeval", file=sys.stderr)
