@@ -122,11 +122,12 @@ A raw copy of the ConceptNet relations, for convenience.
 """
 
 PADDING_RELATION_ID = 0
-TOKEN_RELATION_ID = 1
+TOKEN_TO_TOKEN_RELATION_ID = 1
+TOKEN_TO_KB_RELATION_ID = 2
 
 CN_RELATIONS = {
         orig_id: Relation(orig_id, internal_id, name, directed) 
-        for (internal_id, (orig_id, name, directed)) in enumerate(__RAW_RELATIONS, start=2)
+        for (internal_id, (orig_id, name, directed)) in enumerate(__RAW_RELATIONS, start=3)
 }
 
 REV_RELATIONS = {

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 
 # STL
+import time
+import csv
 import argparse
-import pdb
 import sys
-import dataclasses
 import functools
+from typing import Iterable, List, Any, Generator
 # 3rd Party
 import psycopg2
-import psycopg2.extras
 from tokenizers.pre_tokenizers import BertPreTokenizer
 # local
-from gatbert.data import Sample, parse_ez_stance
-from gatbert.constants import CN_RELATIONS, REV_RELATIONS
-
+from gatbert.data import parse_ez_stance, Sample
+from gatbert.constants import *
+from gatbert.utils import CumProf, DurationLogger
 
 
 def generate_degree_column(conn):
@@ -37,72 +37,103 @@ def generate_degree_column(conn):
                 conn.rollback()
                 print(err)
 
-@dataclasses.dataclass
-class GraphSample:
-    pass
 
-def extract(conn, sample_gen, N=2):
 
-    pretok = BertPreTokenizer()
+def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[List[Any], None, None]:
 
-    cursor = conn.cursor('cursor_unique_name', psycopg2.extras.DictCursor)
+    # Wrap all DB calls in memoized functions
+    cursor = conn.cursor()
 
+    @CumProf
+    @functools.lru_cache
+    def get_uri(node_id):
+        cursor.execute(f"SELECT uri FROM nodes WHERE id={node_id}")
+        return cursor.fetchall()[0][0]
+
+    @CumProf
     @functools.lru_cache
     def find_match(token):
         token = token.lower()
-        cursor.execute("SELECT id,uri FROM nodes ORDER BY degree DESC LIMIT 1")
+        cursor.execute(f"SELECT id FROM nodes WHERE uri='/c/en/{token}' ORDER BY degree DESC LIMIT 1")
+        # TODO: I'd like to do a regex like this, but it's nearly 2 orders of magnitude slower
+        # cursor.execute(f"SELECT id FROM nodes WHERE uri LIKE '/c/en/{token}%' ORDER BY degree DESC LIMIT 1")
         records = cursor.fetchall()
         if records:
-            return (records[0]['id'], records[0]['uri'])
+            return records[0][0]
         return None
 
+    @DurationLogger
     @functools.lru_cache
     def find_neighbors(node_id):
-        cursor.execute("SELECT start_id,end_id,relation_id FROM edges WHERE start_id=node_id OR end_id=node_id")
+        cursor.execute(f"SELECT start_id,end_id,relation_id FROM edges WHERE start_id={node_id}")
         records = cursor.fetchall()
 
-        neighbors = set()
-        edges = {}
-        
-        for rec in records:
-            orig_id = rec['relation_id']
-            start_id = rec['start_id']
-            end_id = rec['end_id']
-            if start_id != node_id:
-                neighbors.add(start_id)
-            elif end_id != node_id:
-                neighbors.add(end_id)
+        cursor.execute(f"SELECT start_id,end_id,relation_id FROM edges WHERE end_id={node_id}")
+        records.extend(cursor.fetchall())
 
+        edges = set()
+        for (start_id, end_id, orig_id) in records:
             rel_obj = CN_RELATIONS[orig_id]
-            edges.append( (start_id, end_id, rel_obj.internal_id) )
-
+            edges.add( (start_id, end_id, rel_obj.internal_id) )
             # Add the reverse edge if such an edge exist
             rev_rel_obj = REV_RELATIONS.get(orig_id)
             if rev_rel_obj:
-                edges.append( (end_id, start_id, rev_rel_obj.internal_id) )
+                edges.add( (end_id, start_id, rev_rel_obj.internal_id) )
 
-        return neighbors, edges
+        return list(edges)
 
+    pretok = BertPreTokenizer()
     for sample in sample_gen:
         context = sample.context
         target = sample.target
         stance = sample.stance.value
 
-        target_toks = pretok.pre_tokenize_str(target)
-        N_target = len(target_toks)
-        context_toks = pretok.pre_tokenize_str(context)
-        N_context = len(context_toks)
+        target_toks = [pair[0] for pair in pretok.pre_tokenize_str(target)]
+        context_toks = [pair[0] for pair in pretok.pre_tokenize_str(context)]
         toks = target_toks + context_toks
 
-        for tok in toks:
-            match = find_match(tok)
-            if not match:
+
+        edges = []
+        kb_nodes = []
+        kb_indices = dict()
+        def get_node_index(node_id):
+            if node_id not in kb_indices:
+                kb_indices[node_id] = len(toks) + len(kb_nodes)
+                kb_nodes.append(get_uri(node_id))
+            return kb_indices[node_id]
+
+        frontier = []
+        for (i, tok) in enumerate(toks):
+            node_id = find_match(tok)
+            if node_id is None:
                 continue
-            (node_id, node_uri) = match
+            kb_index = get_node_index(node_id)
+            # Bidirectional edge between the token and its KB node match
+            edges.append((i, kb_index, TOKEN_TO_KB_RELATION_ID))
+            edges.append((kb_index, i, TOKEN_TO_KB_RELATION_ID))
+            frontier.append((node_id, 0))
+        print(f"find_match={find_match.reset()}")
 
-            pass
+        visited = set()
+        while frontier:
+            (node_id, hops) = frontier.pop(0)
+            visited.add(node_id)
+            if hops + 1 <= max_hops:
+                for (head_node_id, tail_node_id, rel_id) in find_neighbors(node_id):
+                    head_index = get_node_index(head_node_id)
+                    tail_index = get_node_index(tail_node_id)
+                    edges.append((head_index, tail_index, rel_id))
 
-        yield [stance, N_target, N_context, *toks]
+                    if head_node_id not in visited:
+                        frontier.append((head_node_id, hops + 1))
+                    if tail_node_id not in visited:
+                        frontier.append((tail_node_id, hops + 1))
+        print(f"find_neighbors={find_neighbors.reset()}")
+        print(f"get_uri={get_uri.reset()}")
+
+        # TODO: Add any additional edges missing among the nodes of the subgraph
+
+        yield [stance, len(target_toks), len(context_toks), len(kb_nodes), *target_toks, *context_toks, *kb_nodes, *edges]
 
 
 def main(raw_args=None):
@@ -110,15 +141,17 @@ def main(raw_args=None):
 
     parser.add_argument("--gen_degree", action="store_true", help="Force regeneration of the degree column for the nodes table")
 
-    parser.add_argument("--ezstance", type=str, required=True, metavar="input.csv", help="File containing stance data from the EZStance dataset")
-    parser.add_argument("--vast",     type=str, required=True, metavar="input.csv", help="File containing stance data from the VAST dataset")
-    parser.add_argument("--semeval",  type=str, required=True, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
+    parser.add_argument("--ezstance", type=str, metavar="input.csv", help="File containing stance data from the EZStance dataset")
+    parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
+    parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="File pretokenized stance samples, with graph nodes")
-    args = parser.parse_arg(raw_args)
+    args = parser.parse_args(raw_args)
+
+    conn = psycopg2.connect(dbname='conceptnet5', host='127.0.0.1')
 
     if args.gen_degree:
-        conn = psycopg2.connect("dbname='conceptnet5'")
         generate_degree_column(conn)
+        conn.close()
         return
 
     if not any([args.ezstance, args.vast, args.semeval]):
@@ -130,6 +163,13 @@ def main(raw_args=None):
         raise RuntimeError("--vast not yet supported")
     else:
         raise RuntimeError("--semeval not yet supported")
+
+    tagged_samples = extract(conn, sample_gen)
+    tagged_samples = map(lambda s: [str(el) for el in s], tagged_samples)
+    with open(args.o, 'w', encoding='utf-8') as w:
+        writer = csv.writer(w, delimiter='\t')
+        writer.writerows(tagged_samples)
+    conn.close()
 
 if __name__ == "__main__":
     main(sys.argv[1:])

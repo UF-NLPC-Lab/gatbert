@@ -26,6 +26,11 @@ class CumProf:
         self.func = func
         self.cumtime = 0
         self.count = 0
+    def reset(self):
+        printout = str(self)
+        self.cumtime = 0
+        self.count = 0
+        return printout
     def __call__(self, *args, **kwargs):
         start = time.time()
         rval = self.func(*args, **kwargs)
@@ -34,3 +39,12 @@ class CumProf:
         return rval
     def __str__(self):
         return f"CumProf(cumtime={self.cumtime}, count={self.count})"
+
+def DurationLogger(f):
+    def wrapped(*args, **kwargs):
+        duration = -time.time()
+        rval = f(*args, **kwargs)
+        duration += time.time()
+        print(f"Took {duration} seconds")
+        return rval
+    return wrapped
