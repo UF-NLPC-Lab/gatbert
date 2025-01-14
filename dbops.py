@@ -7,13 +7,32 @@ import argparse
 import sys
 import functools
 from typing import Iterable, List, Any, Generator
+from collections import defaultdict
 # 3rd Party
 import psycopg2
 from tokenizers.pre_tokenizers import BertPreTokenizer
 # local
 from gatbert.data import parse_ez_stance, Sample
 from gatbert.constants import *
-from gatbert.utils import CumProf, DurationLogger
+from gatbert.utils import CumProf, DurationLogger, batched
+
+def batched_fetch(conn, n):
+    while True:
+        duration = -time.time()
+        batch = conn.fetchmany(n)
+        if not batch:
+            break
+        duration += time.time()
+        print(f"Fetched {len(batch)} records in {duration} seconds")
+        yield from batch
+
+def timed_query(cursor, query):
+    duration = -time.time()
+    cursor.execute(query)
+    recs = cursor.fetchall()
+    duration += time.time()
+    print(f"Fetched {len(recs)} records in {duration} seconds")
+    return recs
 
 
 def generate_degree_column(conn):
@@ -50,16 +69,14 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
         cursor.execute(f"SELECT uri FROM nodes WHERE id={node_id}")
         return cursor.fetchall()[0][0]
 
-    @CumProf
-    @functools.lru_cache
     def find_match(token):
         token = token.lower()
-        cursor.execute(f"SELECT id FROM nodes WHERE uri='/c/en/{token}' ORDER BY degree DESC LIMIT 1")
+        cursor.execute(f"SELECT id,uri FROM nodes WHERE uri='/c/en/{token}' ORDER BY degree DESC LIMIT 1")
         # TODO: I'd like to do a regex like this, but it's nearly 2 orders of magnitude slower
         # cursor.execute(f"SELECT id FROM nodes WHERE uri LIKE '/c/en/{token}%' ORDER BY degree DESC LIMIT 1")
         records = cursor.fetchall()
         if records:
-            return records[0][0]
+            return records[0]
         return None
 
     @DurationLogger
@@ -83,58 +100,77 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
         return list(edges)
 
     pretok = BertPreTokenizer()
-    for sample in sample_gen:
-        context = sample.context
-        target = sample.target
-        stance = sample.stance.value
+    def preprocess(sample: Sample):
+        return [sample.stance.value,
+                [pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
+                [pair[0] for pair in pretok.pre_tokenize_str(sample.context)]
+        ]
+    samples = list(map(preprocess, sample_gen))[:50]
 
-        target_toks = [pair[0] for pair in pretok.pre_tokenize_str(target)]
-        context_toks = [pair[0] for pair in pretok.pre_tokenize_str(context)]
-        toks = target_toks + context_toks
+    
+    tok2id = {}
+    # Don't try to find matches for these--wil break the query.
+    tok2id["'"] = None
+    tok2id['"'] = None
+    duration = -time.time()
+    toks = list(tok for s in samples for tok in s[1] + s[2])
+    for tok in toks:
+        if tok not in tok2id:
+            tok2id[tok] = find_match(tok)
+    duration += time.time()
+    print(f"Queried {len(toks)} tokens in {duration} seconds")
+    tok2id = {k:v for (k,v) in tok2id.items() if v is not None}
 
+    # head_id -> {(tail_id, rel_id)}
+    adj = defaultdict(set)
 
-        edges = []
-        kb_nodes = []
-        kb_indices = dict()
-        def get_node_index(node_id):
-            if node_id not in kb_indices:
-                kb_indices[node_id] = len(toks) + len(kb_nodes)
-                kb_nodes.append(get_uri(node_id))
-            return kb_indices[node_id]
+    visited = set()
+    frontier = {rec[0] for rec in tok2id.values()}
+    cursor.execute("CREATE TEMP TABLE query_ids (id INT PRIMARY KEY)")
+    for i in range(1, max_hops + 1):
+        for id_batch in batched(frontier, 2000):
+            values_str = ','.join([f"({id})" for id in id_batch])
+            duration = -time.time()
+            cursor.execute(f"INSERT INTO query_ids VALUES {values_str}")
+            duration += time.time()
+            print(f"Inserted {len(id_batch)} in {duration} seconds")
 
-        frontier = []
-        for (i, tok) in enumerate(toks):
-            node_id = find_match(tok)
-            if node_id is None:
-                continue
-            kb_index = get_node_index(node_id)
-            # Bidirectional edge between the token and its KB node match
-            edges.append((i, kb_index, TOKEN_TO_KB_RELATION_ID))
-            edges.append((kb_index, i, TOKEN_TO_KB_RELATION_ID))
-            frontier.append((node_id, 0))
-        print(f"find_match={find_match.reset()}")
+        visited |= frontier
+        frontier = set()
 
-        visited = set()
-        while frontier:
-            (node_id, hops) = frontier.pop(0)
-            visited.add(node_id)
-            if hops + 1 <= max_hops:
-                for (head_node_id, tail_node_id, rel_id) in find_neighbors(node_id):
-                    head_index = get_node_index(head_node_id)
-                    tail_index = get_node_index(tail_node_id)
-                    edges.append((head_index, tail_index, rel_id))
+        records = set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM edges ed JOIN query_ids q ON (ed.end_id = q.id OR ed.start_id = q.id)"))
+        # records = set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM edges ed JOIN query_ids q ON ed.end_id = q.id"))
+        # records |= set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM edges ed JOIN query_ids q ON ed.start_id = q.id"))
 
-                    if head_node_id not in visited:
-                        frontier.append((head_node_id, hops + 1))
-                    if tail_node_id not in visited:
-                        frontier.append((tail_node_id, hops + 1))
-        print(f"find_neighbors={find_neighbors.reset()}")
-        print(f"get_uri={get_uri.reset()}")
+        duration = -time.time()
+        i = 0
+        for (start_id, end_id, orig_id) in records:
+            forward_rel = CN_RELATIONS[orig_id]
+            adj[start_id].add((end_id, forward_rel.internal_id))
+            # Add reverse edge
+            if forward_rel.directed:
+                reverse_rel = REV_RELATIONS[orig_id]
+                adj[end_id].add((start_id, reverse_rel.internal_id))
+            else:
+                adj[end_id].add((start_id, forward_rel.internal_id))
+            if start_id not in visited:
+                frontier.add(start_id)
+            if end_id not in visited:
+                frontier.add(end_id)
+            i += 1
+        duration += time.time()
+        print(f"{i} edges in {duration} seconds")
 
-        # TODO: Add any additional edges missing among the nodes of the subgraph
+        cursor.execute("TRUNCATE TABLE query_ids")
 
-        yield [stance, len(target_toks), len(context_toks), len(kb_nodes), *target_toks, *context_toks, *kb_nodes, *edges]
+    # Loop through the tokens
+    # Get the token's assigned CN node
+    # Take N hops away from that CN node to get additional neighbors
+    # TODO: Eventually, patch the graph with missing edges (even if we have all the N-hop neighbors).
+    # TODO: We could do this by keeping a list of "outstanding" edges that could be added after the fact
+    # Convert KB ids in sample to KB uris
 
+    return
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser(description='Extract subgraphs from ConceptNet for stance samples')
@@ -148,6 +184,7 @@ def main(raw_args=None):
     args = parser.parse_args(raw_args)
 
     conn = psycopg2.connect(dbname='conceptnet5', host='127.0.0.1')
+    # conn = psycopg2.connect(dbname='conceptnet5', host='/home/ethanlmines/blue_dir/repos/EthansGuides/conceptnet/pg_sockets/')
 
     if args.gen_degree:
         generate_degree_column(conn)
