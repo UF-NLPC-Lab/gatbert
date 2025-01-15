@@ -1,7 +1,7 @@
 # STL
 from __future__ import annotations
 import csv
-from typing import Optional, Dict, Any, Generator, List, Callable
+from typing import Optional, Dict, Any, Generator, List, Callable, Tuple
 import dataclasses
 # 3rd Party
 import torch
@@ -45,6 +45,50 @@ class PretokenizedSample:
     context: List[str]
     target: List[str]
     stance: Stance
+
+@dataclasses.dataclass
+class GraphSample:
+    nodes: List[str]
+    n_target: int
+    n_context: int
+    edges: List[Tuple[int, int, int]]
+    stance: Stance
+
+    @property
+    def target(self) -> List[str]:
+        return self.nodes[:self.n_target]
+    @property
+    def context(self) -> List[str]:
+        return self.nodes[self.n_target:self.n_target + self.n_context]
+    @property
+    def external(self) -> List[str]:
+        return self.nodes[self.n_target + self.n_context:]
+
+    def to_row(self) -> List[str]:
+        return [str(self.stance.value),
+                str(self.n_target),
+                str(self.n_context),
+                str(len(self.nodes) - self.n_target - self.n_context)] \
+            + self.nodes \
+            + [','.join(e) for e in self.edges]
+    
+    @staticmethod
+    def from_row(entries: List[str]) -> GraphSample:
+        stance = Stance(int(entries[0]))
+        n_target = int(entries[1])
+        n_context = int(entries[2])
+        n_external = int(entries[3])
+        nodes_end = 4 + n_target + n_context + n_external
+        nodes = entries[4:nodes_end]
+        edges = [tuple(map(int, el.split(','))) for el in entries[nodes_end:]]
+
+        return GraphSample(
+            nodes=nodes,
+            n_target=n_target,
+            n_context=n_context,
+            edges=edges,
+            stance=stance
+        )
 
 def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
     pretok = BertPreTokenizer()
