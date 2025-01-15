@@ -11,9 +11,9 @@ from collections import defaultdict
 import psycopg2
 from tokenizers.pre_tokenizers import BertPreTokenizer
 # local
-from gatbert.data import parse_ez_stance, Sample
-from gatbert.constants import *
-from gatbert.utils import batched
+from .data import parse_ez_stance, Sample
+from .constants import *
+from .utils import batched
 
 def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Dict[str, Any]:
 
