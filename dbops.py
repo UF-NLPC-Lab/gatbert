@@ -108,12 +108,12 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
     frontier = {rec[0] for rec in tok2id.values()}
     cursor.execute("CREATE TEMP TABLE query_ids (id INT PRIMARY KEY)")
     for i in range(1, max_hops + 1):
+        query_size = 0
         for id_batch in batched(frontier, 2000):
             values_str = ','.join([f"({id})" for id in id_batch])
-            duration = -time.time()
             cursor.execute(f"INSERT INTO query_ids VALUES {values_str}")
-            duration += time.time()
-            print(f"Inserted {len(id_batch)} in {duration} seconds")
+            query_size += len(id_batch)
+        print(f"Querying edges for a batch of {query_size}")
 
         visited |= frontier
         frontier = set()
