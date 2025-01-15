@@ -66,12 +66,12 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
     @CumProf
     @functools.lru_cache
     def get_uri(node_id):
-        cursor.execute(f"SELECT uri FROM nodes WHERE id={node_id}")
+        cursor.execute(f"SELECT uri FROM pruned_nodes WHERE id={node_id}")
         return cursor.fetchall()[0][0]
 
     def find_match(token):
         token = token.lower()
-        cursor.execute(f"SELECT id,uri FROM nodes WHERE uri='/c/en/{token}' ORDER BY degree DESC LIMIT 1")
+        cursor.execute(f"SELECT id,uri FROM pruned_nodes WHERE uri='/c/en/{token}'")
         # TODO: I'd like to do a regex like this, but it's nearly 2 orders of magnitude slower
         # cursor.execute(f"SELECT id FROM nodes WHERE uri LIKE '/c/en/{token}%' ORDER BY degree DESC LIMIT 1")
         records = cursor.fetchall()
@@ -79,33 +79,13 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
             return records[0]
         return None
 
-    @DurationLogger
-    @functools.lru_cache
-    def find_neighbors(node_id):
-        cursor.execute(f"SELECT start_id,end_id,relation_id FROM edges WHERE start_id={node_id}")
-        records = cursor.fetchall()
-
-        cursor.execute(f"SELECT start_id,end_id,relation_id FROM edges WHERE end_id={node_id}")
-        records.extend(cursor.fetchall())
-
-        edges = set()
-        for (start_id, end_id, orig_id) in records:
-            rel_obj = CN_RELATIONS[orig_id]
-            edges.add( (start_id, end_id, rel_obj.internal_id) )
-            # Add the reverse edge if such an edge exist
-            rev_rel_obj = REV_RELATIONS.get(orig_id)
-            if rev_rel_obj:
-                edges.add( (end_id, start_id, rev_rel_obj.internal_id) )
-
-        return list(edges)
-
     pretok = BertPreTokenizer()
     def preprocess(sample: Sample):
         return [sample.stance.value,
                 [pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
                 [pair[0] for pair in pretok.pre_tokenize_str(sample.context)]
         ]
-    samples = list(map(preprocess, sample_gen))[:50]
+    samples = list(map(preprocess, sample_gen))
 
     
     tok2id = {}
@@ -138,9 +118,9 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
         visited |= frontier
         frontier = set()
 
-        records = set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM edges ed JOIN query_ids q ON (ed.end_id = q.id OR ed.start_id = q.id)"))
-        # records = set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM edges ed JOIN query_ids q ON ed.end_id = q.id"))
-        # records |= set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM edges ed JOIN query_ids q ON ed.start_id = q.id"))
+        # We use a set here because many nodes have self-loops, meaning this query will return a few duplicate edges
+        # The self-loops are almost all synonym relations. In general I'd call them light noise.
+        records = set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM pruned_edges ed JOIN query_ids q ON (ed.end_id = q.id OR ed.start_id = q.id)"))
 
         duration = -time.time()
         i = 0
@@ -163,14 +143,14 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
 
         cursor.execute("TRUNCATE TABLE query_ids")
 
+    yield []
+
     # Loop through the tokens
     # Get the token's assigned CN node
     # Take N hops away from that CN node to get additional neighbors
     # TODO: Eventually, patch the graph with missing edges (even if we have all the N-hop neighbors).
     # TODO: We could do this by keeping a list of "outstanding" edges that could be added after the fact
     # Convert KB ids in sample to KB uris
-
-    return
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser(description='Extract subgraphs from ConceptNet for stance samples')
