@@ -1,13 +1,12 @@
 # STL
 from __future__ import annotations
 import csv
-from typing import Optional, Dict, Any, Generator, List
+from typing import Optional, Dict, Any, Generator, List, Callable
 import dataclasses
-import pdb
 # 3rd Party
 import torch
 from transformers import PreTrainedTokenizerFast
-from tokenizers.pre_tokenizers import PreTokenizer
+from tokenizers.pre_tokenizers import PreTokenizer, BertPreTokenizer
 # Local
 from .constants import Stance, NodeType, DummyRelationType
 from .graph import make_fake_kb_links
@@ -40,6 +39,22 @@ class Sample:
     context: str
     target: str
     stance: Stance
+
+@dataclasses.dataclass
+class PretokenizedSample:
+    context: List[str]
+    target: List[str]
+    stance: Stance
+
+def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
+    pretok = BertPreTokenizer()
+    def f(sample: Sample):
+        return PretokenizedSample(
+            context=[pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
+            target=[pair[0] for pair in pretok.pre_tokenize_str(sample.context)],
+            stance=sample.stance
+        )
+    return f
 
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}

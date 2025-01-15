@@ -9,13 +9,12 @@ from typing import Iterable, Dict, Any
 from collections import defaultdict
 # 3rd Party
 import psycopg2
-from tokenizers.pre_tokenizers import BertPreTokenizer
 # local
-from .data import parse_ez_stance, Sample
+from .data import parse_ez_stance, Sample, PretokenizedSample, get_default_pretokenize
 from .constants import *
 from .utils import batched
 
-def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Dict[str, Any]:
+def extract(conn, sample_gen: Iterable[PretokenizedSample], max_hops: int = 2) -> Dict[str, Any]:
 
     # Wrap all DB calls in memoized functions
     cursor = conn.cursor()
@@ -27,23 +26,13 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Dict[str, 
             values_str = ','.join([f"({id})" for id in id_batch])
             cursor.execute(f"INSERT INTO query_ids VALUES {values_str}")
 
-
-    pretok = BertPreTokenizer()
-    def preprocess(sample: Sample):
-        return [sample.stance.value,
-                [pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
-                [pair[0] for pair in pretok.pre_tokenize_str(sample.context)]
-        ]
-    samples = list(map(preprocess, sample_gen))
-
-    
     ############ Find 'zero-hop neighbor' (single matching node for a token) ##########################3
     tok2id = {}
     # Don't try to find matches for these don't need them and requires extra sanitization in the query
     tok2id["'"] = None
     tok2id['"'] = None
     duration = -time.time()
-    toks = list(tok for s in samples for tok in s[1] + s[2])
+    toks = list(tok.lower() for s in sample_gen for tok in s.context + s.target)
     for tok in toks:
         if tok not in tok2id:
             # TODO: I'd like to do a regex instead, but it's slower
@@ -132,7 +121,9 @@ def main(raw_args=None):
         raise RuntimeError("--vast not yet supported")
     else:
         raise RuntimeError("--semeval not yet supported")
-
+    
+    pretok_func = get_default_pretokenize()
+    sample_gen = map(pretok_func, sample_gen)
     graph = extract(conn, sample_gen)
     conn.close()
     with open(args.o, 'w', encoding='utf-8') as w:
