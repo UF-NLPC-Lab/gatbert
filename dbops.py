@@ -35,29 +35,6 @@ def timed_query(cursor, query):
     return recs
 
 
-def generate_degree_column(conn):
-    conn.autocommit = False
-    with conn:
-        with conn.cursor() as curs:
-            try:
-                curs.execute("ALTER TABLE nodes DROP COLUMN IF EXISTS degree")
-                curs.execute("ALTER TABLE nodes DROP COLUMN IF EXISTS out_degree")
-                curs.execute("ALTER TABLE nodes DROP COLUMN IF EXISTS in_degree")
-                curs.execute("ALTER TABLE nodes ADD COLUMN out_degree INTEGER DEFAULT 0")
-                curs.execute("ALTER TABLE nodes ADD COLUMN  in_degree INTEGER DEFAULT 0")
-
-                out_degree_comm = "update nodes n set out_degree = subquery.out_degree from (select start_id as id, count(*) as out_degree from edges group by start_id) as subquery where n.id = subquery.id;"
-                in_degree_comm = "update nodes n set in_degree = subquery.in_degree from (select end_id as id, count(*) as in_degree from edges group by end_id) as subquery where n.id = subquery.id;"
-
-                curs.execute(out_degree_comm)
-                curs.execute(in_degree_comm)
-                curs.execute("ALTER TABLE nodes ADD COLUMN degree INTEGER GENERATED ALWAYS AS (in_degree + out_degree) STORED")
-            except (Exception, psycopg2.DatabaseError) as err:
-                conn.rollback()
-                print(err)
-
-
-
 def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[List[Any], None, None]:
 
     # Wrap all DB calls in memoized functions

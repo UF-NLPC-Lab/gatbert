@@ -57,6 +57,12 @@ NUM_FAKE_NODES = 1000
 Used for dummy routines testing graph logic
 """
 
+DEFAULT_PG_ARGS = "dbname='conceptnet5' host='127.0.0.1'"
+"""
+Default connection arguments for postgres connections
+"""
+
+
 @dataclasses.dataclass
 class Relation:
     orig_id: int
