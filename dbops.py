@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 
 # STL
+import json
 import time
-import csv
 import argparse
 import sys
-import functools
-from typing import Iterable, List, Any, Generator
+from typing import Iterable, Dict, Any 
 from collections import defaultdict
 # 3rd Party
 import psycopg2
@@ -14,47 +13,20 @@ from tokenizers.pre_tokenizers import BertPreTokenizer
 # local
 from gatbert.data import parse_ez_stance, Sample
 from gatbert.constants import *
-from gatbert.utils import CumProf, DurationLogger, batched
+from gatbert.utils import batched
 
-def batched_fetch(conn, n):
-    while True:
-        duration = -time.time()
-        batch = conn.fetchmany(n)
-        if not batch:
-            break
-        duration += time.time()
-        print(f"Fetched {len(batch)} records in {duration} seconds")
-        yield from batch
-
-def timed_query(cursor, query):
-    duration = -time.time()
-    cursor.execute(query)
-    recs = cursor.fetchall()
-    duration += time.time()
-    print(f"Fetched {len(recs)} records in {duration} seconds")
-    return recs
-
-
-def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[List[Any], None, None]:
+def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Dict[str, Any]:
 
     # Wrap all DB calls in memoized functions
     cursor = conn.cursor()
+    # Temporary table used to speed up queries via inner joins
+    cursor.execute("CREATE TEMP TABLE query_ids (id INT PRIMARY KEY)")
 
-    @CumProf
-    @functools.lru_cache
-    def get_uri(node_id):
-        cursor.execute(f"SELECT uri FROM pruned_nodes WHERE id={node_id}")
-        return cursor.fetchall()[0][0]
+    def fill_query_table(ids):
+        for id_batch in batched(ids, 2000):
+            values_str = ','.join([f"({id})" for id in id_batch])
+            cursor.execute(f"INSERT INTO query_ids VALUES {values_str}")
 
-    def find_match(token):
-        token = token.lower()
-        cursor.execute(f"SELECT id,uri FROM pruned_nodes WHERE uri='/c/en/{token}'")
-        # TODO: I'd like to do a regex like this, but it's nearly 2 orders of magnitude slower
-        # cursor.execute(f"SELECT id FROM nodes WHERE uri LIKE '/c/en/{token}%' ORDER BY degree DESC LIMIT 1")
-        records = cursor.fetchall()
-        if records:
-            return records[0]
-        return None
 
     pretok = BertPreTokenizer()
     def preprocess(sample: Sample):
@@ -65,88 +37,91 @@ def extract(conn, sample_gen: Iterable[Sample], max_hops: int = 2) -> Generator[
     samples = list(map(preprocess, sample_gen))
 
     
+    ############ Find 'zero-hop neighbor' (single matching node for a token) ##########################3
     tok2id = {}
-    # Don't try to find matches for these--wil break the query.
+    # Don't try to find matches for these don't need them and requires extra sanitization in the query
     tok2id["'"] = None
     tok2id['"'] = None
     duration = -time.time()
     toks = list(tok for s in samples for tok in s[1] + s[2])
     for tok in toks:
         if tok not in tok2id:
-            tok2id[tok] = find_match(tok)
+            # TODO: I'd like to do a regex instead, but it's slower
+            cursor.execute(f"SELECT id FROM pruned_nodes WHERE uri='/c/en/{tok.lower()}'")
+            records = cursor.fetchall()
+            tok2id[tok] = records[0][0] if records else None
     duration += time.time()
     print(f"Queried {len(toks)} tokens in {duration} seconds")
     tok2id = {k:v for (k,v) in tok2id.items() if v is not None}
 
-    # head_id -> {(tail_id, rel_id)}
+    ##################### Find max_hops-neighbors from those matched nodes, along with their edges ###################3
     adj = defaultdict(set)
+    def add_edge(start_id, end_id, orig_id):
+        forward_rel = CN_RELATIONS[orig_id]
+        adj[start_id].add((end_id, forward_rel.internal_id))
+        # Add reverse edge
+        if forward_rel.directed:
+            reverse_rel = REV_RELATIONS[orig_id]
+            adj[end_id].add((start_id, reverse_rel.internal_id))
+        else:
+            adj[end_id].add((start_id, forward_rel.internal_id))
 
+    id2uri = {}
+    # head_id -> {(tail_id, rel_id)}
     visited = set()
-    frontier = {rec[0] for rec in tok2id.values()}
-    cursor.execute("CREATE TEMP TABLE query_ids (id INT PRIMARY KEY)")
-    for i in range(1, max_hops + 1):
-        query_size = 0
-        for id_batch in batched(frontier, 2000):
-            values_str = ','.join([f"({id})" for id in id_batch])
-            cursor.execute(f"INSERT INTO query_ids VALUES {values_str}")
-            query_size += len(id_batch)
-        print(f"Querying edges for a batch of {query_size}")
+    frontier = set(tok2id.values())
+    for _ in range(1, max_hops + 1):
+        fill_query_table(frontier)
 
-        visited |= frontier
-        frontier = set()
-
+        ################################################################## Query the Edge Table #######################################################
+        print(f"Querying with {len(frontier)} node IDs")
+        cursor.execute("SELECT start_id,end_id,relation_id FROM pruned_edges ed JOIN query_ids q ON (ed.end_id = q.id OR ed.start_id = q.id)")
         # We use a set here because many nodes have self-loops, meaning this query will return a few duplicate edges
         # The self-loops are almost all synonym relations. In general I'd call them light noise.
-        records = set(timed_query(cursor, f"SELECT start_id,end_id,relation_id FROM pruned_edges ed JOIN query_ids q ON (ed.end_id = q.id OR ed.start_id = q.id)"))
+        records = set(cursor.fetchall())
+        print(f"Fetched {len(records)} edges")
 
-        duration = -time.time()
-        i = 0
+        ################################ Add Edges to Adj matrix and next-hop neighbors to frontier #####################################################
+        visited |= frontier
+        frontier = set()
         for (start_id, end_id, orig_id) in records:
-            forward_rel = CN_RELATIONS[orig_id]
-            adj[start_id].add((end_id, forward_rel.internal_id))
-            # Add reverse edge
-            if forward_rel.directed:
-                reverse_rel = REV_RELATIONS[orig_id]
-                adj[end_id].add((start_id, reverse_rel.internal_id))
-            else:
-                adj[end_id].add((start_id, forward_rel.internal_id))
+            add_edge(start_id, end_id, orig_id)
             if start_id not in visited:
                 frontier.add(start_id)
             if end_id not in visited:
                 frontier.add(end_id)
-            i += 1
-        duration += time.time()
-        print(f"{i} edges in {duration} seconds")
 
+        ################################# Get the URIs for the relevant node ids ##############################################
+        cursor.execute("SELECT n.id,uri FROM pruned_nodes n JOIN query_ids q ON n.id = q.id;")
+        id2uri.update(cursor.fetchall())
         cursor.execute("TRUNCATE TABLE query_ids")
 
-    yield []
+    # The last nodes we encountered may have edges between them as well. Probability a rarity, but just to be safe...
+    fill_query_table(frontier)
+    print(f"Querying with {len(frontier)} node IDs")
+    cursor.execute("SELECT start_id,end_id,relation_id FROM pruned_edges ed JOIN query_ids q_start ON ed.start_id = q_start.id JOIN query_ids q_end ON ed.end_id = q_end.id;")
+    records = set(cursor.fetchall())
+    print(f"Adding {len(records)} additional edges but no additional nodes")
+    [add_edge(*rec) for rec in records]
 
-    # Loop through the tokens
-    # Get the token's assigned CN node
-    # Take N hops away from that CN node to get additional neighbors
-    # TODO: Eventually, patch the graph with missing edges (even if we have all the N-hop neighbors).
-    # TODO: We could do this by keeping a list of "outstanding" edges that could be added after the fact
-    # Convert KB ids in sample to KB uris
+    graph_dict = {
+        "tok2id" : tok2id,
+        "id2uri" : id2uri,
+        "adj": {k:list(v) for k,v in adj.items()}
+    }
+    return graph_dict
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser(description='Extract subgraphs from ConceptNet for stance samples')
 
-    parser.add_argument("--gen_degree", action="store_true", help="Force regeneration of the degree column for the nodes table")
-
+    parser.add_argument("-pg", default=DEFAULT_PG_ARGS, metavar=DEFAULT_PG_ARGS, help="Arguments for the psycopg2 connection object")
     parser.add_argument("--ezstance", type=str, metavar="input.csv", help="File containing stance data from the EZStance dataset")
     parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
-    parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="File pretokenized stance samples, with graph nodes")
+    parser.add_argument("-o",         type=str, required=True, metavar="output_file.json", help="File holding CN subgraph data")
     args = parser.parse_args(raw_args)
 
     conn = psycopg2.connect(dbname='conceptnet5', host='127.0.0.1')
-    # conn = psycopg2.connect(dbname='conceptnet5', host='/home/ethanlmines/blue_dir/repos/EthansGuides/conceptnet/pg_sockets/')
-
-    if args.gen_degree:
-        generate_degree_column(conn)
-        conn.close()
-        return
 
     if not any([args.ezstance, args.vast, args.semeval]):
         print("Must select one of --ezstance, --vast, or --semeval", file=sys.stderr)
@@ -158,12 +133,10 @@ def main(raw_args=None):
     else:
         raise RuntimeError("--semeval not yet supported")
 
-    tagged_samples = extract(conn, sample_gen)
-    tagged_samples = map(lambda s: [str(el) for el in s], tagged_samples)
-    with open(args.o, 'w', encoding='utf-8') as w:
-        writer = csv.writer(w, delimiter='\t')
-        writer.writerows(tagged_samples)
+    graph = extract(conn, sample_gen)
     conn.close()
+    with open(args.o, 'w', encoding='utf-8') as w:
+        json.dump(graph, w)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
