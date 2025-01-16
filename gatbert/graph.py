@@ -1,5 +1,5 @@
 # STL
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 import dataclasses
 # 3rd Party
 import torch
@@ -17,7 +17,7 @@ class CNGraph:
     adj: Dict[int, List[Tuple[int, int]]]
 
     @staticmethod
-    def from_json(json_data):
+    def from_json(json_data: Dict[str, Any]):
         return CNGraph(
             tok2id=json_data['tok2id'],
             id2uri={int(k):v for k,v in json_data['id2uri'].items()},

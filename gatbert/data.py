@@ -63,6 +63,9 @@ class GraphSample:
     @property
     def external(self) -> List[str]:
         return self.nodes[self.n_target + self.n_context:]
+    @property
+    def n_external(self) -> int:
+        return len(self.nodes) - self.n_context - self.n_target
 
     def to_row(self) -> List[str]:
         return [str(self.stance.value),
@@ -70,7 +73,7 @@ class GraphSample:
                 str(self.n_context),
                 str(len(self.nodes) - self.n_target - self.n_context)] \
             + self.nodes \
-            + [','.join(e) for e in self.edges]
+            + [','.join(tuple(map(str,e))) for e in self.edges]
     
     @staticmethod
     def from_row(entries: List[str]) -> GraphSample:

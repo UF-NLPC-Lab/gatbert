@@ -93,6 +93,10 @@ def extract(conn, sample_gen: Iterable[PretokenizedSample], max_hops: int = 2) -
     print(f"Adding {len(records)} additional edges but no additional nodes")
     [add_edge(*rec) for rec in records]
 
+    # Also need the URIs for those final nodes too
+    cursor.execute("SELECT n.id,uri FROM pruned_nodes n JOIN query_ids q ON n.id = q.id;")
+    id2uri.update(cursor.fetchall())
+
     graph_dict = {
         "tok2id" : tok2id,
         "id2uri" : id2uri,
