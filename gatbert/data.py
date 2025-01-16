@@ -97,8 +97,8 @@ def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
     pretok = BertPreTokenizer()
     def f(sample: Sample):
         return PretokenizedSample(
-            context=[pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
-            target=[pair[0] for pair in pretok.pre_tokenize_str(sample.context)],
+            context=[pair[0] for pair in pretok.pre_tokenize_str(sample.context)],
+            target=[pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
             stance=sample.stance
         )
     return f

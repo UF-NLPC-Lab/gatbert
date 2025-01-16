@@ -52,6 +52,8 @@ Padding ID to use when batches of nodes to equal sizes.
 
 DEFAULT_BATCH_SIZE = 4
 
+DEFAULT_MAX_DEGREE = 50
+
 NUM_FAKE_NODES = 1000
 """
 Used for dummy routines testing graph logic

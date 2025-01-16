@@ -6,12 +6,20 @@ import json
 import argparse
 import sys
 import csv
+from itertools import islice
 # Local
-from .constants import TOKEN_TO_KB_RELATION_ID
+from .constants import TOKEN_TO_KB_RELATION_ID, DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize, GraphSample
 from .graph import CNGraph
 
-def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 2) -> GraphSample:
+def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
+    """
+    Args:
+        sample:
+        max_hops:
+        max_degree:
+            If a node's degree exceeds this size, don't explore its neighborhood
+    """
     token_nodes = [*sample.target, *sample.context]
     nodes = [*token_nodes]
     kb2arrind = dict()
@@ -42,11 +50,13 @@ def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 2) -> GraphS
         frontier = set()
         for head_kb_id in last_frontier:
             head_arr_ind = kb2arrind[head_kb_id] # Safe to use direct dictionary lookup here instead of the function
-            for (tail_kb_id, relation_id) in graph.adj.get(head_kb_id, []):
-                tail_arr_ind = get_node_index(tail_kb_id)
-                edges.add((head_arr_ind, tail_arr_ind, relation_id))
-                frontier.add(head_kb_id)
-                frontier.add(tail_kb_id)
+            outgoing = graph.adj.get(head_kb_id, [])
+            if len(outgoing) <= max_degree:
+                for (tail_kb_id, relation_id) in outgoing:
+                    tail_arr_ind = get_node_index(tail_kb_id)
+                    edges.add((head_arr_ind, tail_arr_ind, relation_id))
+                    frontier.add(head_kb_id)
+                    frontier.add(tail_kb_id)
         frontier -= visited
 
     missing_edges = set()
@@ -75,6 +85,7 @@ def main(raw_args=None):
     parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("--graph",    type=str, metavar="graph.json", help="File containing graph data written with .extract_cn")
+    parser.add_argument("--max-degree", type=int, metavar=DEFAULT_MAX_DEGREE, default=DEFAULT_MAX_DEGREE, help="If a node's degree exceeds this size, don't explore its neighborhood")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
     args = parser.parse_args(raw_args)
 
@@ -92,7 +103,7 @@ def main(raw_args=None):
         graph = CNGraph.from_json(json.load(r))
 
     sample_gen = map(get_default_pretokenize(), sample_gen)
-    sample_gen = map(lambda s: tag(s, graph), sample_gen)
+    sample_gen = map(lambda s: tag(s, graph, max_degree=args.max_degree), sample_gen)
     sample_gen = map(lambda s: s.to_row(), sample_gen)
     with open(args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(sample_gen)
