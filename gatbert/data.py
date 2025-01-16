@@ -5,10 +5,10 @@ from typing import Optional, Dict, Any, Generator, List, Callable, Tuple
 import dataclasses
 # 3rd Party
 import torch
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, BertTokenizerFast
 from tokenizers.pre_tokenizers import PreTokenizer, BertPreTokenizer
 # Local
-from .constants import Stance, NodeType, DummyRelationType
+from .constants import Stance, NodeType, DummyRelationType, CorpusType
 from .graph import make_fake_kb_links
 
 
@@ -103,10 +103,48 @@ def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
         )
     return f
 
+def parse_graph_tsv(tsv_path) -> Generator[GraphSample, None, None]:
+    with open(tsv_path, 'r') as r:
+        yield from map(GraphSample.from_row, csv.reader(r, delimiter='\t'))
+
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}
     with open(csv_path, 'r', encoding='latin-1') as r:
         yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']]), csv.DictReader(r))
+
+def parse_vast(csv_path) -> Generator[Sample, None, None]:
+    raise NotImplementedError
+
+def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
+    raise NotImplementedError
+
+def make_file_parser(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast) -> Callable[[str], Generator[Dict[str, torch.Tensor], None, None]]:
+    """
+    Returns:
+        Function that takes a file path and returns a generator of samples
+    """
+    if corpus_type == 'graph':
+        def f(file_path: str):
+            for sample in parse_graph_tsv(file_path):
+                # FIXME: Figure out how to handle Roberta tokenizers and others that refuse is_split_into_words=True
+                result = tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_offsets_mapping=True)
+                result['stance'] = torch.tensor(sample.stance.value)
+                yield result
+    else:
+        if corpus_type == 'ezstance':
+            parse_fn = parse_ez_stance
+        elif corpus_type == 'vast':
+            parse_fn = parse_vast
+        elif corpus_type == 'semeval':
+            parse_fn = parse_semeval
+        else:
+            raise ValueError(f"Invalid corpus_type {corpus_type}")
+        def f(file_path: str):
+            for sample in parse_fn(file_path):
+                result = tokenizer(text=sample.target, text_pair=sample.context, return_tensors='pt')
+                result['stance'] = torch.tensor(sample.stance.value)
+                yield result
+    return f
 
 def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreTokenizer] = None, add_fake_edges=False):
 
