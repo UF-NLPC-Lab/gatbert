@@ -110,7 +110,7 @@ def main(raw_args=None):
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.json", help="File holding CN subgraph data")
     args = parser.parse_args(raw_args)
 
-    conn = psycopg2.connect(dbname='conceptnet5', host='127.0.0.1')
+    conn = psycopg2.connect(args.pg)
 
     if not any([args.ezstance, args.vast, args.semeval]):
         print("Must select one of --ezstance, --vast, or --semeval", file=sys.stderr)
