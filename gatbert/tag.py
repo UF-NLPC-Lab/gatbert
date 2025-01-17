@@ -6,10 +6,11 @@ import json
 import argparse
 import sys
 import csv
-from itertools import islice
+from typing import List
 # Local
-from .constants import TOKEN_TO_KB_RELATION_ID, DEFAULT_MAX_DEGREE
-from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize, GraphSample
+from .constants import TOKEN_TO_KB_RELATION_ID, DEFAULT_MAX_DEGREE, NodeType
+from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
+from .graph_sample import GraphSample
 from .graph import CNGraph
 
 def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
@@ -20,28 +21,24 @@ def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degre
         max_degree:
             If a node's degree exceeds this size, don't explore its neighborhood
     """
-    token_nodes = [*sample.target, *sample.context]
-    nodes = [*token_nodes]
-    kb2arrind = dict()
-    def get_node_index(kb_id: int):
-        if kb_id not in kb2arrind:
-            kb2arrind[kb_id] = len(nodes)
-            nodes.append(kb_id)
-        return kb2arrind[kb_id]
 
-    # TODO: Can we use a list for this? Do we need to worry about duplicates?
-    # (head_ind, tail_ind, internal_relation_id)
-    edges = set()
+    builder = GraphSample.Builder(stance=sample.stance)
 
     frontier = set()
-    for (token_ind, token) in enumerate(map(lambda t: t.lower(), token_nodes)):
-        kb_id = graph.tok2id.get(token)
-        if kb_id is None:
-            continue
-        kb_ind = get_node_index(kb_id)
-        edges.add( (token_ind, kb_ind, TOKEN_TO_KB_RELATION_ID) )
-        edges.add( (kb_ind, token_ind, TOKEN_TO_KB_RELATION_ID) )
-        frontier.add(kb_id)
+    def make_seed_dict(tokens: List[str]):
+        rval = []
+        for token in tokens:
+            seeds = []
+            kb_id = graph.tok2id.get(token.lower())
+            if kb_id is not None:
+                frontier.add(kb_id)
+                seeds.append(kb_id)
+            rval.append((token, seeds))
+        return rval
+    builder.add_seeds(
+        make_seed_dict(sample.target),
+        make_seed_dict(sample.context)
+    )
 
     visited = set()
     for _ in range(max_hops):
@@ -49,35 +46,23 @@ def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degre
         last_frontier = frontier
         frontier = set()
         for head_kb_id in last_frontier:
-            head_arr_ind = kb2arrind[head_kb_id] # Safe to use direct dictionary lookup here instead of the function
             outgoing = graph.adj.get(head_kb_id, [])
             if len(outgoing) <= max_degree:
                 for (tail_kb_id, relation_id) in outgoing:
-                    tail_arr_ind = get_node_index(tail_kb_id)
-                    edges.add((head_arr_ind, tail_arr_ind, relation_id))
-                    frontier.add(head_kb_id)
+                    builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
                     frontier.add(tail_kb_id)
         frontier -= visited
 
-    missing_edges = set()
     for head_kb_id in frontier:
-        head_arr_ind = kb2arrind[head_kb_id]
-        missing_edges.update((head_arr_ind, kb2arrind[tail_kb_id], relation_id) for (tail_kb_id, relation_id) in graph.adj[head_kb_id] if tail_kb_id in frontier)
-    edges |= missing_edges
+        for (tail_kb_id, relation_id) in graph.adj[head_kb_id]:
+            if tail_kb_id in frontier:
+                builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
 
-    n_context = len(sample.context)
-    n_target = len(sample.target)
+    graph_sample = builder.build()
     # Replace all KB IDs with KB uris now
-    for i in range(n_target + n_context, len(nodes)):
-        nodes[i] = graph.id2uri[nodes[i]]
-
-    return GraphSample(
-        nodes=nodes,
-        n_target=n_target,
-        n_context=n_context,
-        edges=list(edges),
-        stance=sample.stance
-    )
+    for i in range(len(graph_sample.kb)):
+        graph_sample.kb[i] = graph.id2uri[graph_sample.kb[i]]
+    return graph_sample
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser(description=__doc__)
