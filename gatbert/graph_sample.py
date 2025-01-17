@@ -139,18 +139,19 @@ class GraphSample:
         n_context = int(entries[2])
         n_external = int(entries[3])
 
-        text_end = 4 + n_target + n_context
-        nodes_end = text_end + n_external
+        target_end = 4 + n_target
+        context_end = target_end + n_context
+        nodes_end = context_end + n_external
 
-        text_nodes = entries[4:text_end]
-        external_nodes = entries[text_end: nodes_end]
+        target = entries[4:target_end]
+        context = entries[target_end:context_end]
+        external_nodes = entries[context_end:nodes_end]
         edges = [Edge.from_serial(el) for el in entries[nodes_end:]]
 
         return GraphSample(
-            text_nodes=text_nodes,
-            external_nodes=external_nodes,
-            n_target=n_target,
-            n_context=n_context,
+            target=target,
+            context=context,
+            kb=external_nodes,
             edges=edges,
             stance=stance
         )

@@ -10,6 +10,7 @@ from tokenizers.pre_tokenizers import PreTokenizer, BertPreTokenizer
 # Local
 from .constants import Stance, NodeType, DummyRelationType, CorpusType
 from .graph import make_fake_kb_links
+from .graph_sample import GraphSample
 
 
 class MapDataset(torch.utils.data.Dataset):
