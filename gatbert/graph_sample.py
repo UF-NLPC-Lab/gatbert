@@ -1,17 +1,15 @@
 from __future__ import annotations
 import dataclasses
-from collections import OrderedDict
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Tuple, Any, Set
 
 from .constants import Stance, NodeType, TOKEN_TO_KB_RELATION_ID
-from .graph import CNGraph
 
 
 @dataclasses.dataclass
 class Edge:
-    head_graph_index: int
+    # head_graph_index: int
     head_node_index: int
-    tail_graph_index: int
+    # tail_graph_index: int
     tail_node_index: int
     relation_id: int
 
@@ -21,7 +19,7 @@ class Edge:
         return isinstance(other, Edge) and self.__to_tuple() == other.__to_tuple()
 
     def __to_tuple(self):
-        return (self.head_graph_index, self.head_node_index, self.tail_graph_index, self.tail_node_index, self.relation_id)
+        return (self.head_node_index, self.tail_node_index, self.relation_id)
 
     def to_serial(self) -> str:
         return ','.join([str(el) for el in self.__to_tuple()])
