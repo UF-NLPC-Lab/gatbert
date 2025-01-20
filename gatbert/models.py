@@ -109,7 +109,7 @@ class GATBert(StanceModule):
 
         Args:
             kb_ids: (batch, max_external_nodes) array with the IDs of knowledge base nodes
-            edge_indices: (?, 6) index array with latter 6 components being (batch, head, tail, relation, head_node_type, tail_node_type)
+            edge_indices: (6, ?) index array with latter 6 components being (batch, head, tail, relation, head_node_type, tail_node_type)
                 batch indexes into the batch dim of other arguments
                 head indexes into the seq dim of input_ids, or the node dim of kb_ids
                 tail indexes into the seq dim of input_ids, or the node dim of kb_ids

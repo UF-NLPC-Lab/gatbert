@@ -1,8 +1,14 @@
+# STL
 from __future__ import annotations
 import dataclasses
 from typing import Dict, List, Tuple, Any, Set
-
-from .constants import Stance, NodeType, TOKEN_TO_KB_RELATION_ID
+from collections import defaultdict, OrderedDict
+from itertools import product
+# 3rd Party
+import torch
+from transformers import PreTrainedTokenizerFast
+# Local
+from .constants import Stance, NodeType, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID
 
 
 @dataclasses.dataclass
@@ -118,6 +124,96 @@ class GraphSample:
         self.context = context
         self.kb = kb
         self.edges = edges
+
+    def encode(self, tokenizer: PreTrainedTokenizerFast) -> Dict[str, torch.Tensor]:
+
+        # FIXME: This is assuming all the KB tokens are conceptnet URIs
+        clean_kb = [uri.split('/')[3] for uri in self.kb]
+
+        tokenized_text = tokenizer(text=self.target, text_pair=self.context, is_split_into_words=True, return_offsets_mapping=True, return_tensors='pt')
+        tokenized_kb = tokenizer(text=clean_kb, is_split_into_words=True, return_offsets_mapping=True, return_tensors='pt')
+        concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
+
+        # (node_index, subword_index)
+        expand_list = defaultdict(list)
+        pool_inds = OrderedDict()
+
+        new_nodes_index = -1
+        orig_nodes_index = -1
+
+        # For token subwords, we will split a token's nodes into subwords
+        token_offset_mapping = tokenized_text['offset_mapping'].squeeze()
+        # Handle splitting of token nodes into subword nodes
+        for (subword_index, (start, end)) in enumerate(token_offset_mapping):
+            new_nodes_index += 1
+            pool_inds[new_nodes_index] = []
+
+            if start != end: # Real character, not a special character
+                if start == 0: # Start of a token
+                    orig_nodes_index += 1
+                expand_list[orig_nodes_index].append(new_nodes_index)
+            pool_inds[new_nodes_index].append(subword_index)
+
+        # For KB subwords, we plan to pool each into one combined node
+        kb_offset_mapping = tokenized_kb['offset_mapping'].squeeze()
+        for (subword_index, (start, end)) in enumerate(kb_offset_mapping, start=subword_index + 1):
+            if start == end:
+                # Special character; skip over
+                new_nodes_index += 1
+                pool_inds[new_nodes_index] = []
+            elif start == 0:
+                new_nodes_index += 1
+                pool_inds[new_nodes_index] = []
+                orig_nodes_index += 1
+                expand_list[orig_nodes_index].append(new_nodes_index)
+            pool_inds[new_nodes_index].append(subword_index)
+        num_new_nodes = new_nodes_index + 1
+
+        mask_indices = []
+        mask_values = []
+        for (new_node_ind, subword_inds) in pool_inds.items():
+            mask_indices.extend((0, new_node_ind, subword_ind) for subword_ind in subword_inds)
+            v = 1 / len(subword_inds)
+            mask_values.extend(v for _ in subword_inds)
+
+        mask_indices = torch.tensor(mask_indices).transpose(1, 0)
+        mask_values = torch.tensor(mask_values)
+        node_mask = torch.sparse_coo_tensor(
+            indices=mask_indices,
+            values=mask_values,
+            size=(1, num_new_nodes, concat_ids.shape[-1]),
+            is_coalesced=True,
+            dtype=torch.float
+        )
+
+        # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
+        # Need a 0 at the beginning for batch
+        new_edges = []
+        # The original token-to-token edges of a standard BERT model
+        num_text_tokens = tokenized_text.input_ids.shape[-1]
+        new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
+        new_edges.extend((0, tail, head, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
+
+        # The edges that we read from the file.
+        # Update their head/tail indices to account for subwords and special tokens
+        for edge in self.edges:
+            if edge.head_node_index not in expand_list:
+                print(f"Warning: found no expansions for node {edge.head_node_index}")
+                continue
+            head_expand_list = expand_list[edge.head_node_index]
+            if edge.tail_node_index not in expand_list:
+                print(f"Warning: found no expansions for node {edge.tail_node_index}")
+                continue
+            tail_expand_list = expand_list[edge.tail_node_index]
+            new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(head_expand_list, tail_expand_list))
+        new_edges.sort()
+
+        new_edges = torch.tensor(new_edges).transpose(1, 0)
+        return {
+            "input_ids" : concat_ids,
+            "node_mask" : node_mask,
+            "edge_indices": new_edges
+        }
 
     def to_row(self) -> List[str]:
         rval= [str(self.stance.value),
