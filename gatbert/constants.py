@@ -2,7 +2,6 @@ import enum
 import dataclasses
 from typing import Literal
 
-CorpusType = Literal['ezstance', 'semeval', 'vast', 'graph']
 
 @enum.unique
 class SemEvalTargets(enum.Enum):

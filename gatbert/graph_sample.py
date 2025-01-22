@@ -263,7 +263,8 @@ class GraphSample:
         return {
             "input_ids" : concat_ids,
             "node_mask" : node_mask,
-            "edge_indices": new_edges
+            "edge_indices": new_edges,
+            "stance": torch.tensor(self.stance.value, device=device)
         }
 
     @staticmethod
@@ -302,7 +303,8 @@ class GraphSample:
         return {
             'input_ids': new_input_ids,
             'node_mask': batch_node_mask,
-            'edge_indices': new_edge_indices
+            'edge_indices': new_edge_indices,
+            "stance": torch.stack([s['stance'] for s in samples])
         }
 
     def to_row(self) -> List[str]:

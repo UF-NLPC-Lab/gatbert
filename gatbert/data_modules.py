@@ -9,6 +9,7 @@ import lightning as L
 from typing import Dict, List, Tuple, Literal
 from .data import make_encoder, make_collate_fn, MapDataset, parse_ez_stance
 from .constants import DEFAULT_MODEL
+from .types import CorpusType
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
@@ -42,10 +43,11 @@ class ByTargetDataModule(StanceDataModule):
                 train_targets: List[str],
                 val_targets: List[str],
                 test_targets: List[str],
+                corpus: CorpusType,
                 *parent_args,
                 **parent_kwargs
         ):
-        super().__init__(*parent_args, **parent_kwargs)
+        super().__init__(*parent_args, corpus=corpus, **parent_kwargs)
         self.save_hyperparameters()
 
         self.__parse_fn = None
@@ -98,7 +100,7 @@ class RandomSplitDataModule(StanceDataModule):
 
     def __init__(self,
                 partitions: Dict[str, Tuple[float, float, float]],
-                corpus: Literal['ezstance', 'semeval', 'vast'],
+                corpus: CorpusType,
                 *parent_args,
                 **parent_kwargs
         ):
@@ -107,7 +109,7 @@ class RandomSplitDataModule(StanceDataModule):
         Partitions is a mapping file_name->(train allocation, val allocation, test allocation).
         That is, for each data file, you specify how many of its samples go to training, validation, and test.
         """
-        super().__init__(*parent_args, **parent_kwargs)
+        super().__init__(*parent_args, corpus=corpus, **parent_kwargs)
         self.save_hyperparameters()
 
         if corpus == "ezstance":
