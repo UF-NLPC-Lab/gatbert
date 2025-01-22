@@ -4,11 +4,12 @@ import dataclasses
 from typing import Dict, List, Tuple, Any, Set
 from collections import defaultdict, OrderedDict
 from itertools import product
+import logging
 # 3rd Party
 import torch
 from transformers import PreTrainedTokenizerFast
 # Local
-from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID
+from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID, MAX_KB_NODES
 
 
 @dataclasses.dataclass
@@ -140,16 +141,33 @@ class GraphSample:
         self.edges = edges
 
     def encode(self, tokenizer: PreTrainedTokenizerFast) -> Dict[str, torch.Tensor]:
-
         # FIXME: This is assuming all the KB tokens are conceptnet URIs
         clean_kb = [uri.split('/')[3] for uri in self.kb]
+        clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
 
-        tokenized_text = tokenizer(text=self.target, text_pair=self.context, is_split_into_words=True, return_offsets_mapping=True, return_tensors='pt')
-        tokenized_kb = tokenizer(text=clean_kb, is_split_into_words=True, return_offsets_mapping=True, return_tensors='pt')
-        concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
+        tokenized_text = tokenizer(text=self.target,
+                                   text_pair=self.context,
+                                   is_split_into_words=True,
+                                   return_offsets_mapping=True,
+                                   return_tensors='pt',
+                                   truncation='longest_first')
+        tokenized_kb = tokenizer(text=clean_kb,
+                                 is_split_into_words=True,
+                                 return_offsets_mapping=True,
+                                 return_tensors='pt')
+        device = tokenized_text['input_ids'].device
 
-        # (node_index, subword_index)
+        relevant_keys = ['input_ids', 'offset_mapping']
+        tokenized_text = {k:tokenized_text[k] for k in relevant_keys}
+        tokenized_kb = {k:tokenized_kb[k] for k in relevant_keys}
+        # Assumes the tokens with 0-length offsets are special tokens
+        real_toks = tokenized_kb['offset_mapping'][0, :, 1] != 0
+        for k in relevant_keys:
+            tokenized_kb[k] = tokenized_kb[k][:, real_toks]
+
+        # old_node_index -> [new_node_indices]
         expand_list = defaultdict(list)
+        # new_node_index -> [subword_indices]
         pool_inds = OrderedDict()
 
         new_nodes_index = -1
@@ -168,19 +186,34 @@ class GraphSample:
                 expand_list[orig_nodes_index].append(new_nodes_index)
             pool_inds[new_nodes_index].append(subword_index)
 
+
+        # Need to fast-forward past the token nodes to the external ones
+        # Some of the token nodes may have been truncated by the tokenizer
+        orig_nodes_index = len(self.target) + len(self.context) - 1
+
         # For KB subwords, we plan to pool each into one combined node
         kb_offset_mapping = tokenized_kb['offset_mapping'].squeeze()
+        n_kb_nodes = 0
         for (subword_index, (start, end)) in enumerate(kb_offset_mapping, start=subword_index + 1):
-            if start == end:
-                # Special character; skip over
-                new_nodes_index += 1
-                pool_inds[new_nodes_index] = []
-            elif start == 0:
+            if start == 0:
+                assert end != 0, "Special tokens should have been scrubbed"
+                if n_kb_nodes >= MAX_KB_NODES:
+                    logging.warning("Discarded %s/%s of external nodes", len(self.kb) - n_kb_nodes, len(self.kb))
+                    break
+                n_kb_nodes += 1
                 new_nodes_index += 1
                 pool_inds[new_nodes_index] = []
                 orig_nodes_index += 1
                 expand_list[orig_nodes_index].append(new_nodes_index)
             pool_inds[new_nodes_index].append(subword_index)
+        else:
+            # Needs to be 1 greater than the last subword we included
+            subword_index += 1
+
+        concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
+        # The tokenizer already did truncation for tokens, but this is where we do truncation for external nodes
+        concat_ids = concat_ids[..., :subword_index]
+
         num_new_nodes = new_nodes_index + 1
 
         mask_indices = []
@@ -190,39 +223,38 @@ class GraphSample:
             v = 1 / len(subword_inds)
             mask_values.extend(v for _ in subword_inds)
 
-        mask_indices = torch.tensor(mask_indices).transpose(1, 0)
-        mask_values = torch.tensor(mask_values)
+        mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
+        mask_values = torch.tensor(mask_values, device=device)
         node_mask = torch.sparse_coo_tensor(
             indices=mask_indices,
             values=mask_values,
             size=(1, num_new_nodes, concat_ids.shape[-1]),
             is_coalesced=True,
-            dtype=torch.float
+            dtype=torch.float,
+            device=device
         )
 
         # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
         # Need a 0 at the beginning for batch
         new_edges = []
         # The original token-to-token edges of a standard BERT model
-        num_text_tokens = tokenized_text.input_ids.shape[-1]
+        num_text_tokens = tokenized_text['input_ids'].shape[-1]
         new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
         new_edges.extend((0, tail, head, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
 
         # The edges that we read from the file.
         # Update their head/tail indices to account for subwords and special tokens
+        discarded = 0
         for edge in self.edges:
-            if edge.head_node_index not in expand_list:
-                print(f"Warning: found no expansions for node {edge.head_node_index}")
+            if edge.head_node_index not in expand_list or edge.tail_node_index not in expand_list:
+                discarded += 1
                 continue
-            head_expand_list = expand_list[edge.head_node_index]
-            if edge.tail_node_index not in expand_list:
-                print(f"Warning: found no expansions for node {edge.tail_node_index}")
-                continue
-            tail_expand_list = expand_list[edge.tail_node_index]
-            new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(head_expand_list, tail_expand_list))
+            expand_list[edge.tail_node_index]
+            new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(expand_list[edge.head_node_index], expand_list[edge.tail_node_index]))
         new_edges.sort()
+        logging.debug("Discarded %s/%s edges.", discarded, len(self.edges))
 
-        new_edges = torch.tensor(new_edges).transpose(1, 0)
+        new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
         return {
             "input_ids" : concat_ids,
             "node_mask" : node_mask,
