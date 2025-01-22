@@ -1,6 +1,8 @@
+import logging
 from functools import reduce
 from typing import List, Any
 import time
+from contextlib import contextmanager
 
 def flat_map(f, iterable) -> List[Any]:
     return reduce(lambda a,b: a + b, map(f, iterable), [])
@@ -20,6 +22,16 @@ def batched(iterable, n: int):
             batch = []
     if batch:
         yield batch
+
+@contextmanager
+def change_log_level(logger_name: str, log_level: int = logging.ERROR):
+    try:
+        logger = logging.getLogger(logger_name)
+        old_level = logger.getEffectiveLevel()
+        logger.setLevel(log_level)
+        yield
+    finally:
+        logger.setLevel(old_level)
 
 class CumProf:
     def __init__(self, func):
