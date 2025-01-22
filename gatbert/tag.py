@@ -8,7 +8,7 @@ import sys
 import csv
 from typing import List
 # Local
-from .constants import TOKEN_TO_KB_RELATION_ID, DEFAULT_MAX_DEGREE, NodeType
+from .constants import DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
 from .graph_sample import GraphSample
 from .graph import CNGraph

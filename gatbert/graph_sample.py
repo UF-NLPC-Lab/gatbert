@@ -8,14 +8,12 @@ from itertools import product
 import torch
 from transformers import PreTrainedTokenizerFast
 # Local
-from .constants import Stance, NodeType, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID
+from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID
 
 
 @dataclasses.dataclass
 class Edge:
-    # head_graph_index: int
     head_node_index: int
-    # tail_graph_index: int
     tail_node_index: int
     relation_id: int
 
@@ -49,6 +47,20 @@ class ArrayDict:
 class GraphSample:
 
     class Builder:
+        """
+        Builds the graph to be stored in the GraphSample.
+
+        First call .add_seeds to add the text nodes and the external (i.e. ConceptNet)
+        nodes they're directly linked to.
+        The builder will make the necessary edges for these links.
+
+        Then call .add_kb_edge for each edge that you have, in a breadth-first order.
+        That is, the edges you pass to this method should be those obtained from a
+        breadth-first search. This is crucial to tokenizing the the KB nodes later,
+        as we will chop off the last nodes visited to stay within maximum sequence length.
+        The closer nodes in a BFS are more important than the distant ones.
+        """
+
         def __init__(self,
                      stance: Stance):
 
@@ -57,6 +69,8 @@ class GraphSample:
             self.context: List[str] = []
             self.kb = ArrayDict()
             self.edges: Set[Edge] = set()
+
+            self.__seeded = False
 
         def add_seeds(self,
                      target: List[Tuple[str, List[Any]]],
@@ -67,39 +81,39 @@ class GraphSample:
 
             self.target = [pair[0] for pair in target]
             self.context = [pair[0] for pair in context]
+            n_text = len(self.target) + len(self.context)
 
             node_lists = [pair[1] for pair in target + context]
 
             for (text_ind, nodes) in enumerate(node_lists):
                 for node in nodes:
-                    node_ind = self.kb.get_index(node)
+                    node_ind = n_text + self.kb.get_index(node)
 
                     self.edges.add(Edge(
-                        head_graph_index=NodeType.TOKEN.value,
                         head_node_index=text_ind,
-                        tail_graph_index=NodeType.KB.value,
                         tail_node_index=node_ind,
                         relation_id=TOKEN_TO_KB_RELATION_ID
                     ))
                     self.edges.add(Edge(
-                        head_graph_index=NodeType.KB.value,
                         head_node_index=node_ind,
-                        tail_graph_index=NodeType.TOKEN.value,
                         tail_node_index=text_ind,
                         relation_id=TOKEN_TO_KB_RELATION_ID
                     ))
+            self.__seeded = True
 
         def add_kb_edge(self,
                         head: Any,
                         tail: Any,
                         relation_id: int):
-            head_node_index = self.kb.get_index(head)
-            tail_node_index = self.kb.get_index(tail)
+            if not self.__seeded:
+                raise ValueError("Call .add_seeds before .add_kb_edge")
+
+            n_text = len(self.target) + len(self.context)
+            head_node_index = n_text + self.kb.get_index(head)
+            tail_node_index = n_text + self.kb.get_index(tail)
 
             self.edges.add(Edge(
-                head_graph_index=NodeType.KB.value,
                 head_node_index=head_node_index,
-                tail_graph_index=NodeType.KB.value,
                 tail_node_index=tail_node_index,
                 relation_id=relation_id
             ))
