@@ -1,23 +1,25 @@
 
 # 3rd Party
 import torch
-from transformers.models.bert.modeling_bert import BertSelfAttention
+from transformers.models.bert.modeling_bert import BertSelfAttention, \
+    BertSelfOutput, \
+    BertIntermediate, \
+    BertOutput, \
+    BertAttention, \
+    BertLayer, \
+    BertEncoder
 
-class EdgeAttention(torch.nn.Module):
+class GatbertSelfAttention(torch.nn.Module):
     """
     Attention calculation among nodes, modulated by a sparse set of edge features
     """
 
-    def __init__(self,
-                hidden_size: int,
-                num_attention_heads: int,
-                attention_head_size: int,
-                dropout_prob: int):
-        self.hidden_size = hidden_size
-        self.all_head_size = num_attention_heads * attention_head_size
-        self.num_attention_heads = num_attention_heads
-        self.attention_head_size = attention_head_size
-        self.dropout_prob = dropout_prob
+    def __init__(self, config):
+        self.hidden_size: int = config.hidden_size
+        self.num_attention_heads: int = config.num_attention_heads
+        self.attention_head_size: int = config.attention_head_size
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+        self.dropout_prob: float = self.dropout_prob
 
         # Parameters already found in BERT models
         self.query = torch.nn.Linear(self.hidden_size, self.all_head_size)
@@ -35,15 +37,6 @@ class EdgeAttention(torch.nn.Module):
         new_shape = x.shape[:1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(new_shape)
         return x.permute(0, 2, 1)
-
-    @staticmethod
-    def from_pretrained_config(config):
-        return EdgeAttention(
-            hidden_size=config.hidden_size,
-            num_attention_heads=config.num_attention_heads,
-            attention_head_size=config.attention_head_size,
-            dropout_prob=config.attention_probs_dropout_prob
-        )
 
     def load_pretrained_weights(self, other: BertSelfAttention):
         assert self.num_attention_heads == other.num_attention_heads
@@ -114,3 +107,59 @@ class EdgeAttention(torch.nn.Module):
         node_states = flat_node_states.reshape(batch_size, n_nodes, -1)
 
         return node_states
+
+class GatbertAttention(torch.nn.Module):
+    def __init__(self, config):
+        self.attention = GatbertSelfAttention(config)
+        self.output = BertSelfOutput(config)
+        pass
+
+    def load_pretrained_weights(self, other: BertAttention):
+        self.attention.load_pretrained_weights(other.self)
+        self.output.load_state_dict(other.output.state_dict())
+
+    def forward(self, node_states: torch.Tensor, edge_states: torch.Tensor):
+        """
+        Args:
+            node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
+            edge_states: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
+        """
+        node_states = self.attention(node_states, edge_states)
+        node_states = self.output(node_states)
+        edge_states = self.output(edge_states)
+        return (node_states, edge_states)
+
+class GatbertLayer(torch.nn.Module):
+    """
+    Parallels HF BertLayer class
+    """
+    def __init__(self, config):
+        self.attention = GatbertAttention(config)
+        self.intermediate = BertIntermediate(config)
+        self.output = BertOutput(config)
+    def load_pretrained_weights(self, other: BertLayer):
+        self.attention.load_pretrained_weights(other.attention)
+        self.intermediate.load_state_dict(other.intermediate.state_dict())
+        self.output.load_state_dict(other.output.state_dict())
+    def forward(self, node_states: torch.Tensor, edge_states: torch.Tensor):
+        node_states = self.attention(node_states, edge_states)
+
+        node_states = self.intermediate(node_states)
+        node_states = self.output(node_states)
+
+        # FIXME: May have to extract the values, project, and then make edge_states a sparse tensor again
+        edge_states = self.intermediate(edge_states)
+        edge_states = self.output(edge_states)
+
+        return (node_states, edge_states)
+
+class GatbertEncoder(torch.nn.Module):
+    def __init__(self, config):
+        self.layer = torch.nn.ModuleList(GatbertLayer(config) for _ in range(config.num_hidden_layers))
+    def load_pretrained_weights(self, other: BertEncoder):
+        for (self_layer, other_layer) in zip(self.layer, other.layer):
+            self_layer.load_pretrained_weights(other_layer)
+    def forward(self, node_states, edge_states):
+        for layer_module in self.layer:
+            (node_states, edge_states) = layer_module
+        return node_states, edge_states
