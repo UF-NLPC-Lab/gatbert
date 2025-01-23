@@ -150,3 +150,4 @@ REV_RELATIONS = {
         for (internal_id, (orig_id, name, directed)) in enumerate(filter(lambda r: r[2], __RAW_RELATIONS), start=len(CN_RELATIONS)+3)
 }
 
+NUMBER_RELATIONS = 3 + len(CN_RELATIONS) + len(REV_RELATIONS)
