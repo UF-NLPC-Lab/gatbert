@@ -3,7 +3,7 @@ from lightning.pytorch.cli import LightningCLI
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 # Local
 from .constants import DEFAULT_MODEL
-from .models import *
+from .modules import *
 from .data_modules import *
 
 class CustomCLI(LightningCLI):

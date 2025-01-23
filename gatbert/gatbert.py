@@ -7,7 +7,9 @@ from transformers.models.bert.modeling_bert import BertSelfAttention, \
     BertOutput, \
     BertAttention, \
     BertLayer, \
-    BertEncoder
+    BertEncoder, \
+    BertEmbeddings, \
+    BertModel
 
 class GatbertSelfAttention(torch.nn.Module):
     """
@@ -163,3 +165,78 @@ class GatbertEncoder(torch.nn.Module):
         for layer_module in self.layer:
             (node_states, edge_states) = layer_module
         return node_states, edge_states
+
+class GatbertEmbeddings(torch.nn.Module):
+    def __init__(self, config):
+        self.word_embeddings = torch.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
+        self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+
+    def load_pretrained_weights(self, other: BertEmbeddings):
+        self.word_embeddings.load_state_dict(other.word_embeddings.state_dict())
+        self.layer_norm.load_state_dict(other.LayerNorm.state_dict())
+
+    def forward(self, subword_ids: torch.Tensor, pooling_mask: torch.Tensor):
+        if not pooling_mask.is_coalesced():
+            pooling_mask = pooling_mask.coalesce()
+        (batch_size, max_nodes, max_subnodes) = pooling_mask.shape
+
+        # (batch_size, max_subnodes, embedding)
+        subnode_embeddings = self.word_embeddings(subword_ids)
+        # (batch_size * max_subnodes, embedding)
+        subnode_embeddings = torch.flatten(subnode_embeddings, end_dim=-2)
+
+
+        indices = pooling_mask.get_indices()
+        batch_node_indices = indices[0] * max_nodes + indices[1]
+        batch_subnode_indices = indices[0] * max_subnodes + indices[2]
+        # (batch_size * max_nodes, batch_size * max_subnodes)
+        expanded_mask = torch.sparse_coo_tensor(
+            indices=torch.stack([batch_node_indices, batch_subnode_indices]),
+            values=pooling_mask.values(),
+            size=(batch_size * max_nodes, batch_size * max_subnodes),
+            is_coalesced=True,
+            requires_grad=True,
+            device=pooling_mask.device
+        )
+
+        # (batch_size * max_nodes, batch_size * max_subnodes) @ (batch_size * max_subnodes, embedding)
+        node_embeddings = torch.sparse.mm(expanded_mask, subnode_embeddings)
+        node_embeddings = node_embeddings.reshape(batch_size, max_nodes, -1)
+
+        node_embeddings = self.layer_norm(node_embeddings)
+        node_embeddings = self.dropout(node_embeddings)
+
+        return node_embeddings
+
+class GatbertModel(torch.nn.Module):
+    def __init__(self, config, n_relations: int):
+        self.embeddings = GatbertEmbeddings(config)
+        self.encoder = GatbertEncoder(config)
+        self.relation_embeddings = torch.nn.Embedding(n_relations, config.hidden_size)
+
+    def load_pretrained_weights(self, other: BertModel):
+        self.embeddings.load_pretrained_weights(other.embeddings)
+        self.encoder.load_pretrained_weights(other.encoder)
+
+    def forward(self, input_ids: torch.Tensor, node_mask: torch.Tensor, edge_indices: torch.Tensor):
+        node_states = self.embeddings(input_ids, node_mask)
+        (batch_size, n_nodes) = node_states.shape[:2]
+
+        # All the indices save the relation IDs
+        simple_edge_indices = edge_indices[:-1]
+        relation_indices = edge_indices[-1]
+
+        edge_values = self.relation_embeddings(relation_indices)
+        edge_states = torch.sparse_coo_tensor(
+            indices=simple_edge_indices,
+            values=edge_values,
+            size=(batch_size, n_nodes, n_nodes, edge_values.shape[-1]),
+            requires_grad=True,
+            is_coalesced=False
+        )
+        # There will be duplicate values from multiple relations between the same nodes
+        # Coalescing will sum these values
+        edge_states = edge_states.coalesce()
+
+        return self.encoder(node_states, edge_states)
