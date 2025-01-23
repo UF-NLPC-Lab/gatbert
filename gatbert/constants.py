@@ -42,7 +42,8 @@ ENCODED_FIELDS = {
     "position_ids",
 }
 
-DEFAULT_MODEL = "textattack/roberta-base-MNLI"
+# DEFAULT_MODEL = "textattack/roberta-base-MNLI"
+DEFAULT_MODEL = "bert-base-uncased"
 """
 See https://huggingface.co/textattack/roberta-base-MNLI
 """
@@ -140,14 +141,14 @@ PADDING_RELATION_ID = 0
 TOKEN_TO_TOKEN_RELATION_ID = 1
 TOKEN_TO_KB_RELATION_ID = 2
 
-CN_RELATIONS = {
+CN_FORWARD_RELATIONS = {
         orig_id: Relation(orig_id, internal_id, name, directed) 
         for (internal_id, (orig_id, name, directed)) in enumerate(__RAW_RELATIONS, start=3)
 }
 
-REV_RELATIONS = {
+CN_REV_RELATIONS = {
         orig_id: Relation(orig_id, internal_id, f"/reverse/{name}", directed) 
-        for (internal_id, (orig_id, name, directed)) in enumerate(filter(lambda r: r[2], __RAW_RELATIONS), start=len(CN_RELATIONS)+3)
+        for (internal_id, (orig_id, name, directed)) in enumerate(filter(lambda r: r[2], __RAW_RELATIONS), start=len(CN_FORWARD_RELATIONS)+3)
 }
 
-NUMBER_RELATIONS = 3 + len(CN_RELATIONS) + len(REV_RELATIONS)
+NUM_CN_RELATIONS = 3 + len(CN_FORWARD_RELATIONS) + len(CN_REV_RELATIONS)

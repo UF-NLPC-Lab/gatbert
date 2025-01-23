@@ -46,11 +46,11 @@ def extract(conn, sample_gen: Iterable[PretokenizedSample], max_hops: int = 2) -
     ##################### Find max_hops-neighbors from those matched nodes, along with their edges ###################3
     adj = defaultdict(set)
     def add_edge(start_id, end_id, orig_id):
-        forward_rel = CN_RELATIONS[orig_id]
+        forward_rel = CN_FORWARD_RELATIONS[orig_id]
         adj[start_id].add((end_id, forward_rel.internal_id))
         # Add reverse edge
         if forward_rel.directed:
-            reverse_rel = REV_RELATIONS[orig_id]
+            reverse_rel = CN_REV_RELATIONS[orig_id]
             adj[end_id].add((start_id, reverse_rel.internal_id))
         else:
             adj[end_id].add((start_id, forward_rel.internal_id))
