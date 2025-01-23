@@ -7,22 +7,24 @@ from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, List, Tuple, Literal
-from .data import make_encoder, make_collate_fn, MapDataset, parse_ez_stance
+from .data import make_file_parser, make_collate_fn, MapDataset
 from .constants import DEFAULT_MODEL
 from .types import CorpusType
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  batch_size: int,
+                 corpus: CorpusType,
                  pretrained_model: str = DEFAULT_MODEL
                 ):
         super().__init__()
         self.save_hyperparameters()
 
         tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.pretrained_model, use_fast=True)
+
         # Protected variables
-        self._encoder = make_encoder(tokenizer_model)
-        self._collate_fn = make_collate_fn(tokenizer_model)
+        self._file_parser = make_file_parser(self.hparams.corpus, tokenizer_model)
+        self._collate_fn = make_collate_fn(self.hparams.corpus, tokenizer_model)
 
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
@@ -32,62 +34,6 @@ class StanceDataModule(L.LightningDataModule):
     def _make_test_loader(self, dataset: Dataset):
         return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._collate_fn)
 
-
-class ByTargetDataModule(StanceDataModule):
-    """
-    Data module that partitions training, validation, and test sets based on the stance target.
-    Should only be used with datasets with a small set of targets (e.g., SemEval2016-Task6)
-    """
-    def __init__(self,
-                i: List[str],
-                train_targets: List[str],
-                val_targets: List[str],
-                test_targets: List[str],
-                corpus: CorpusType,
-                *parent_args,
-                **parent_kwargs
-        ):
-        super().__init__(*parent_args, corpus=corpus, **parent_kwargs)
-        self.save_hyperparameters()
-
-        self.__parse_fn = None
-        raise ValueError("Parse function for SemEval not yet implemented")
-
-        self.__data: MapDataset = None
-        self.__train_ds: MapDataset = None
-        self.__val_ds: MapDataset = None
-        self.__test_ds: MapDataset = None
-
-    def prepare_data(self):
-        self.__data = MapDataset(map(self._encoder, self.__parse_fn(self.hparams.i)))
-
-    def setup(self, stage):
-        if stage == "fit" or stage is None:
-            assert self.hparams.train_targets
-            train_samples = []
-            val_samples = []
-            train_targs = set(self.hparams.train_targets)
-            val_targs = set(self.hparams.val_targets)
-            for sample in self.__data:
-                if sample['target'] in train_targs:
-                    train_samples.append(sample)
-                elif sample['target'] in val_targs:
-                    val_samples.append(sample)
-            train_ds = MapDataset(train_samples)
-            val_ds = MapDataset(val_samples)
-            self.__train_ds = train_ds
-            self.__val_ds = val_ds.map(self.remove_enhanced)
-        if stage == "test" or stage is None:
-            assert self.hparams.test_targets
-            test_targs = set(self.hparams.test_targets)
-            self.__test_ds = MapDataset(list(filter(lambda s: s['target'] in test_targs, self.__data))).map(self.remove_enhanced)
-
-    def train_dataloader(self):
-        return self._make_train_loader(self.__train_ds)
-    def val_dataloader(self):
-        return self._make_val_loader(self.__val_ds)
-    def test_dataloader(self):
-        return self._make_test_loader(self.__test_ds)
 
 class RandomSplitDataModule(StanceDataModule):
     """
@@ -112,13 +58,6 @@ class RandomSplitDataModule(StanceDataModule):
         super().__init__(*parent_args, corpus=corpus, **parent_kwargs)
         self.save_hyperparameters()
 
-        if corpus == "ezstance":
-            self.__parse_fn = parse_ez_stance
-        elif corpus == "semeval":
-            raise ValueError("'semeval' parser not yet defined")
-        else:
-            raise ValueError("'vast' parser not yet defined")
-
         self.__data: Dict[str, MapDataset] = {}
         self.__train_ds: Dataset = None
         self.__val_ds: Dataset = None
@@ -126,7 +65,7 @@ class RandomSplitDataModule(StanceDataModule):
 
     def prepare_data(self):
         for data_path in self.hparams.partitions:
-            self.__data[data_path] = MapDataset(map(self._encoder, self.__parse_fn(data_path)))
+            self.__data[data_path] = MapDataset(self._file_parser(data_path))
 
     def setup(self, stage):
         train_dses = []
