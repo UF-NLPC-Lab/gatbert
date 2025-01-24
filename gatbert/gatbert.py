@@ -53,44 +53,33 @@ class GatbertSelfAttention(torch.nn.Module):
 
     def forward(self,
                 node_states: torch.Tensor,
-                edge_states: torch.Tensor):
+                edge_indices: torch.Tensor,
+                edge_values: torch.Tensor):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edges: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
         """
+        (batch_size, n_nodes) = node_states.shape[:2]
 
         Q = self.query(node_states)
         K_node = self.key(node_states)
         V_node = self.value(node_states)
 
-        edge_indices = edge_states.indices()
-        edge_values = edge_states.values()
-        def project_edges(projection):
-            projected = projection(edge_values)
-            return torch.sparse_coo_tensor(
-                indices=edge_indices,
-                values=projected,
-                size=(*edge_states.shape[:-1], projected.shape[-1]),
-                device=edge_states.device,
-                requires_grad=True,
-                is_coalesced=True
-            )
         K_edge_masked = self.transpose_for_scores(self.key(edge_values))
         V_edge_masked = self.transpose_for_scores(self.value_edge(edge_values))
 
-        edge_indices = edge_states.indices()
         Q_masked = self.transpose_for_scores(Q[edge_indices[0], edge_indices[1]])                       # (num_edges, num_heads, att_head_size)
         K_node_masked = self.transpose_for_scores(K_node[edge_indices[0], edge_indices[2]])             # (num_edges, num_heads, att_head_size)
+
         node2node = torch.sum(Q_masked * K_node_masked, dim=-1) / self.__sqrt_attention_size  # (num_edges, num_heads)
-
         node2edge = torch.sum(Q_masked * K_edge_masked, dim=-1) / self.__sqrt_attention_size  # (num_edges, num_heads)
-
         logits_val = node2node + node2edge
+        # Hybrid tensor with two dense dimensions (num_attention_heads and attention head size)
         logits = torch.sparse_coo_tensor(
             indices=edge_indices,
             values=logits_val,
-            size=(*edge_states.shape[:-1], logits_val.shape[-1]),
+            size=(batch_size, n_nodes, n_nodes, self.num_attention_heads),
             device=logits_val.device,
             is_coalesced=True,
             requires_grad=True
@@ -100,13 +89,11 @@ class GatbertSelfAttention(torch.nn.Module):
         attention_vals = self.dropout(attention_vals)
 
         V_node_masked = self.transpose_for_scores(V_node[edge_indices[0], edge_indices[2]])
-        # V_edge_masked = V_edge[edge_indices[0], edge_indices[1], edge_indices[2]]
         V_masked = V_node_masked + V_edge_masked
 
         elwise_prod = torch.unsqueeze(attention_vals, -1) * V_masked # (num_edges, num_heads, att_head_size)
         elwise_prod = torch.flatten(elwise_prod, start_dim=1) # (num_edges, all_head_size)
 
-        (batch_size, n_nodes) = node_states.shape[:2]
         # (batch * nodes, num_edges)
         edge_mask = torch.sparse_coo_tensor(
             indices=torch.stack([edge_indices[0] * n_nodes + edge_indices[1], torch.arange(edge_indices.shape[1], device=edge_indices.device)]),
@@ -133,16 +120,16 @@ class GatbertAttention(torch.nn.Module):
         self.attention.load_pretrained_weights(other.self)
         self.output.load_state_dict(other.output.state_dict())
 
-    def forward(self, node_states: torch.Tensor, edge_states: torch.Tensor):
+    def forward(self, node_states: torch.Tensor, edge_indices: torch.Tensor, edge_values: torch.Tensor):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edge_states: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
         """
-        node_states = self.attention(node_states, edge_states)
-        node_states = self.output(node_states)
-        edge_states = self.output(edge_states)
-        return (node_states, edge_states)
+        new_node_states = self.attention(node_states, edge_indices, edge_values)
+        new_node_states = self.output(new_node_states, node_states)
+        new_edge_values = self.output(edge_values, edge_values)
+        return (new_node_states, new_edge_values)
 
 class GatbertLayer(torch.nn.Module):
     """
@@ -157,17 +144,17 @@ class GatbertLayer(torch.nn.Module):
         self.attention.load_pretrained_weights(other.attention)
         self.intermediate.load_state_dict(other.intermediate.state_dict())
         self.output.load_state_dict(other.output.state_dict())
-    def forward(self, node_states: torch.Tensor, edge_states: torch.Tensor):
-        node_states = self.attention(node_states, edge_states)
+    def forward(self, node_states: torch.Tensor, edge_indices: torch.Tensor, edge_values: torch.Tensor):
 
-        node_states = self.intermediate(node_states)
-        node_states = self.output(node_states)
+        (node_attention_output, edge_attention_output) = self.attention(node_states, edge_indices, edge_values)
 
-        # FIXME: May have to extract the values, project, and then make edge_states a sparse tensor again
-        edge_states = self.intermediate(edge_states)
-        edge_states = self.output(edge_states)
+        new_node_states = self.intermediate(node_attention_output)
+        new_node_states = self.output(new_node_states, node_attention_output)
 
-        return (node_states, edge_states)
+        new_edge_values = self.intermediate(edge_attention_output)
+        new_edge_values = self.output(new_edge_values, edge_attention_output)
+
+        return (new_node_states, new_edge_values)
 
 class GatbertEncoder(torch.nn.Module):
     def __init__(self, config):
@@ -176,10 +163,10 @@ class GatbertEncoder(torch.nn.Module):
     def load_pretrained_weights(self, other: BertEncoder):
         for (self_layer, other_layer) in zip(self.layer, other.layer):
             self_layer.load_pretrained_weights(other_layer)
-    def forward(self, node_states, edge_states):
+    def forward(self, node_states, edge_indices: torch.Tensor, edge_values: torch.Tensor):
         for layer_module in self.layer:
-            (node_states, edge_states) = layer_module(node_states, edge_states)
-        return node_states, edge_states
+            (node_states, edge_values) = layer_module(node_states, edge_indices, edge_values)
+        return node_states, edge_values
 
 class GatbertEmbeddings(torch.nn.Module):
     def __init__(self, config):
@@ -256,4 +243,4 @@ class GatbertModel(torch.nn.Module):
         # Coalescing will sum these values
         edge_states = edge_states.coalesce()
 
-        return self.encoder(node_states, edge_states)
+        return self.encoder(node_states, edge_states.indices(), edge_states.values())

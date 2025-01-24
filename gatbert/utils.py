@@ -33,6 +33,15 @@ def change_log_level(logger_name: str, log_level: int = logging.ERROR):
     finally:
         logger.setLevel(old_level)
 
+@contextmanager
+def time_block(block_name: str):
+    try:
+        duration = -time.time()
+        yield
+    finally:
+        duration += time.time()
+        print(f"{block_name} took {duration} seconds")
+
 class CumProf:
     def __init__(self, func):
         self.func = func

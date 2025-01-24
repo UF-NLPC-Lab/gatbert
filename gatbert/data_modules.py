@@ -2,11 +2,10 @@
 from __future__ import annotations
 # 3rd Party
 from transformers import AutoTokenizer
-from tokenizers.pre_tokenizers import BertPreTokenizer
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
-from typing import Dict, List, Tuple, Literal
+from typing import Dict, Tuple
 from .data import make_file_parser, make_collate_fn, MapDataset
 from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
 from .types import CorpusType
