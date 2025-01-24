@@ -6,6 +6,7 @@ from .constants import Stance
 
 class StanceClassifier(torch.nn.Module):
     def __init__(self, config, n_relations):
+        super().__init__()
         self.bert = GatbertModel(config, n_relations=n_relations)
         self.projection = torch.nn.Linear(
             config.hidden_size,

@@ -8,19 +8,19 @@ import lightning as L
 # Local
 from typing import Dict, List, Tuple, Literal
 from .data import make_file_parser, make_collate_fn, MapDataset
-from .constants import DEFAULT_MODEL
+from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
 from .types import CorpusType
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
-                 batch_size: int,
                  corpus: CorpusType,
-                 pretrained_model: str = DEFAULT_MODEL
+                 batch_size: int = DEFAULT_BATCH_SIZE,
+                 tokenizer: str = DEFAULT_MODEL
                 ):
         super().__init__()
         self.save_hyperparameters()
 
-        tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.pretrained_model, use_fast=True)
+        tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
 
         # Protected variables
         self._file_parser = make_file_parser(self.hparams.corpus, tokenizer_model)

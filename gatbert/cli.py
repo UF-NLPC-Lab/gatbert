@@ -10,7 +10,7 @@ class CustomCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
         parser.add_argument("--pretrained_model", default=DEFAULT_MODEL)
         parser.link_arguments("pretrained_model", "model.init_args.pretrained_model")
-        parser.link_arguments("pretrained_model", "data.init_args.pretrained_model")
+        parser.link_arguments("pretrained_model", "data.init_args.tokenizer")
 
 def cli_main(**cli_kwargs):
 

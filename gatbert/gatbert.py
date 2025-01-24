@@ -17,28 +17,31 @@ class GatbertSelfAttention(torch.nn.Module):
     """
 
     def __init__(self, config):
+        super().__init__()
         self.hidden_size: int = config.hidden_size
         self.num_attention_heads: int = config.num_attention_heads
-        self.attention_head_size: int = config.attention_head_size
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
-        self.dropout_prob: float = self.dropout_prob
+        assert self.hidden_size % self.num_attention_heads == 0
+        self.attention_head_size: int = self.hidden_size // self.num_attention_heads
 
         # Parameters already found in BERT models
-        self.query = torch.nn.Linear(self.hidden_size, self.all_head_size)
-        self.key = torch.nn.Linear(self.hidden_size, self.all_head_size)
-        self.value = torch.nn.Linear(self.hidden_size, self.all_head_size)
-        self.dropout = torch.nn.Dropout(self.dropout_prob)
+        self.query = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.key = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.value = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.dropout = torch.nn.Dropout(config.attention_probs_dropout_prob)
 
         # New parameters
-        self.value_edge = torch.nn.Linear(self.hidden_size, self.all_head_size)
+        self.value_edge = torch.nn.Linear(self.hidden_size, self.hidden_size)
+
+        self.__sqrt_attention_size = torch.sqrt(torch.tensor(self.attention_head_size))
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         """
         Adapted from BertSelfAttention HF class
         """
-        new_shape = x.shape[:1] + (self.num_attention_heads, self.attention_head_size)
+        # return BertSelfAttention.transpose_for_scores(self, x)
+        new_shape = x.shape[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(new_shape)
-        return x.permute(0, 2, 1)
+        return x
 
     def load_pretrained_weights(self, other: BertSelfAttention):
         assert self.num_attention_heads == other.num_attention_heads
@@ -61,33 +64,43 @@ class GatbertSelfAttention(torch.nn.Module):
         K_node = self.key(node_states)
         V_node = self.value(node_states)
 
-        # FIXME: May have to extract the values, project them, and then make a new sparse tensor
-        K_edge = self.key(edge_states)
-        V_edge = self.value_edge(edge_states)
+        edge_indices = edge_states.indices()
+        edge_values = edge_states.values()
+        def project_edges(projection):
+            projected = projection(edge_values)
+            return torch.sparse_coo_tensor(
+                indices=edge_indices,
+                values=projected,
+                size=(*edge_states.shape[:-1], projected.shape[-1]),
+                device=edge_states.device,
+                requires_grad=True,
+                is_coalesced=True
+            )
+        K_edge_masked = self.transpose_for_scores(self.key(edge_values))
+        V_edge_masked = self.transpose_for_scores(self.value_edge(edge_values))
 
-        edge_indices = edge_states.get_indices()
+        edge_indices = edge_states.indices()
         Q_masked = self.transpose_for_scores(Q[edge_indices[0], edge_indices[1]])                       # (num_edges, num_heads, att_head_size)
         K_node_masked = self.transpose_for_scores(K_node[edge_indices[0], edge_indices[2]])             # (num_edges, num_heads, att_head_size)
-        node2node = torch.sum(Q_masked * K_node_masked, dim=-1) / torch.sqrt(self.attention_head_size)  # (num_edges, num_heads)
+        node2node = torch.sum(Q_masked * K_node_masked, dim=-1) / self.__sqrt_attention_size  # (num_edges, num_heads)
 
-        K_edge_masked = self.transpose_for_scores(K_edge[edge_indices[0], edge_indices[2]])
-        node2edge = torch.sum(Q_masked * K_edge_masked, dim=-1) / torch.sqrt(self.attention_head_size)  # (num_edges, num_heads)
+        node2edge = torch.sum(Q_masked * K_edge_masked, dim=-1) / self.__sqrt_attention_size  # (num_edges, num_heads)
 
         logits_val = node2node + node2edge
         logits = torch.sparse_coo_tensor(
             indices=edge_indices,
             values=logits_val,
-            size=edge_states.shape[:-1],
+            size=(*edge_states.shape[:-1], logits_val.shape[-1]),
             device=logits_val.device,
             is_coalesced=True,
             requires_grad=True
         )
-        sparse_attention = torch.sparse_softmax(logits, dim=-1)
+        sparse_attention = torch.sparse.softmax(logits, dim=-1)
         attention_vals = sparse_attention.values()
         attention_vals = self.dropout(attention_vals)
 
-        V_node_masked = V_node[edge_indices[0], edge_indices[2]]
-        V_edge_masked = V_edge[edge_indices[0], edge_indices[1], edge_indices[2]]
+        V_node_masked = self.transpose_for_scores(V_node[edge_indices[0], edge_indices[2]])
+        # V_edge_masked = V_edge[edge_indices[0], edge_indices[1], edge_indices[2]]
         V_masked = V_node_masked + V_edge_masked
 
         elwise_prod = torch.unsqueeze(attention_vals, -1) * V_masked # (num_edges, num_heads, att_head_size)
@@ -96,7 +109,7 @@ class GatbertSelfAttention(torch.nn.Module):
         (batch_size, n_nodes) = node_states.shape[:2]
         # (batch * nodes, num_edges)
         edge_mask = torch.sparse_coo_tensor(
-            indices=torch.stack([edge_indices[0] * n_nodes + edge_indices[1], torch.arange(edge_indices.shape[1])]),
+            indices=torch.stack([edge_indices[0] * n_nodes + edge_indices[1], torch.arange(edge_indices.shape[1], device=edge_indices.device)]),
             values=torch.ones(edge_indices.shape[1]),
             size=(batch_size * n_nodes, edge_indices.shape[1]),
             device=elwise_prod.device,
@@ -112,9 +125,9 @@ class GatbertSelfAttention(torch.nn.Module):
 
 class GatbertAttention(torch.nn.Module):
     def __init__(self, config):
+        super().__init__()
         self.attention = GatbertSelfAttention(config)
         self.output = BertSelfOutput(config)
-        pass
 
     def load_pretrained_weights(self, other: BertAttention):
         self.attention.load_pretrained_weights(other.self)
@@ -136,6 +149,7 @@ class GatbertLayer(torch.nn.Module):
     Parallels HF BertLayer class
     """
     def __init__(self, config):
+        super().__init__()
         self.attention = GatbertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
@@ -157,17 +171,19 @@ class GatbertLayer(torch.nn.Module):
 
 class GatbertEncoder(torch.nn.Module):
     def __init__(self, config):
+        super().__init__()
         self.layer = torch.nn.ModuleList(GatbertLayer(config) for _ in range(config.num_hidden_layers))
     def load_pretrained_weights(self, other: BertEncoder):
         for (self_layer, other_layer) in zip(self.layer, other.layer):
             self_layer.load_pretrained_weights(other_layer)
     def forward(self, node_states, edge_states):
         for layer_module in self.layer:
-            (node_states, edge_states) = layer_module
+            (node_states, edge_states) = layer_module(node_states, edge_states)
         return node_states, edge_states
 
 class GatbertEmbeddings(torch.nn.Module):
     def __init__(self, config):
+        super().__init__()
         self.word_embeddings = torch.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
@@ -187,7 +203,7 @@ class GatbertEmbeddings(torch.nn.Module):
         subnode_embeddings = torch.flatten(subnode_embeddings, end_dim=-2)
 
 
-        indices = pooling_mask.get_indices()
+        indices = pooling_mask.indices()
         batch_node_indices = indices[0] * max_nodes + indices[1]
         batch_subnode_indices = indices[0] * max_subnodes + indices[2]
         # (batch_size * max_nodes, batch_size * max_subnodes)
@@ -211,6 +227,7 @@ class GatbertEmbeddings(torch.nn.Module):
 
 class GatbertModel(torch.nn.Module):
     def __init__(self, config, n_relations: int):
+        super().__init__()
         self.embeddings = GatbertEmbeddings(config)
         self.encoder = GatbertEncoder(config)
         self.relation_embeddings = torch.nn.Embedding(n_relations, config.hidden_size)

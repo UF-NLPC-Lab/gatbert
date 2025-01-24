@@ -1,7 +1,7 @@
 # 3rd Party
 import torch
 import lightning as L
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoModel
 # Local
 from .f1_calc import F1Calc
 from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS
@@ -15,7 +15,7 @@ class StanceModule(L.LightningModule):
         self.__calc = F1Calc()
 
     def configure_optimizers(self):
-        return torch.optim.Adam()
+        return torch.optim.Adam(self.parameters())
     def training_step(self, batch, batch_idx):
         labels = batch.pop("stance")
         # Calls the forward method defined in subclass
@@ -52,12 +52,17 @@ class StanceModule(L.LightningModule):
         calc.reset()
 
 class CNStanceModule(StanceModule):
-    def __init__(self, model_arch: str = DEFAULT_MODEL):
+    def __init__(self,
+                 pretrained_model: str = DEFAULT_MODEL,
+                 load_pretrained_weights: bool = True):
         super().__init__()
         self.save_hyperparameters()
-        model_config = AutoConfig.from_pretrained(model_arch)
 
+        model_config = AutoConfig.from_pretrained(self.hparams.pretrained_model)
         self.__classifier = StanceClassifier(model_config, NUM_CN_RELATIONS)
+        if self.hparams.load_pretrained_weights:
+            orig_model = AutoModel.from_pretrained(self.hparams.pretrained_model)
+            self.__classifier.bert.load_pretrained_weights(orig_model)
 
     def forward(self, *args, **kwargs):
         return self.__classifier(*args, **kwargs)
