@@ -10,7 +10,7 @@ from collections import defaultdict
 # 3rd Party
 import psycopg2
 # local
-from .data import parse_ez_stance, Sample, PretokenizedSample, get_default_pretokenize
+from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
 from .constants import *
 from .utils import batched
 
