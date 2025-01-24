@@ -1,16 +1,16 @@
 # STL
 from __future__ import annotations
 import csv
-from typing import Optional, Dict, Any, Generator, List
+from typing import Dict, Any, Generator, List, Callable
 import dataclasses
-import pdb
 # 3rd Party
 import torch
 from transformers import PreTrainedTokenizerFast
-from tokenizers.pre_tokenizers import PreTokenizer
+from tokenizers.pre_tokenizers import BertPreTokenizer
 # Local
-from .constants import Stance, NodeType, DummyRelationType
-from .graph import make_fake_kb_links
+from .constants import Stance
+from .types import CorpusType, TensorDict
+from .graph_sample import GraphSample
 
 
 class MapDataset(torch.utils.data.Dataset):
@@ -41,51 +41,68 @@ class Sample:
     target: str
     stance: Stance
 
+@dataclasses.dataclass
+class PretokenizedSample:
+    context: List[str]
+    target: List[str]
+    stance: Stance
+
+
+def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
+    pretok = BertPreTokenizer()
+    def f(sample: Sample):
+        return PretokenizedSample(
+            context=[pair[0] for pair in pretok.pre_tokenize_str(sample.context)],
+            target=[pair[0] for pair in pretok.pre_tokenize_str(sample.target)],
+            stance=sample.stance
+        )
+    return f
+
+def parse_graph_tsv(tsv_path) -> Generator[GraphSample, None, None]:
+    with open(tsv_path, 'r') as r:
+        yield from map(GraphSample.from_row, csv.reader(r, delimiter='\t'))
+
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}
     with open(csv_path, 'r', encoding='latin-1') as r:
         yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']]), csv.DictReader(r))
 
-def make_encoder(tokenizer: PreTrainedTokenizerFast, pretokenizer: Optional[PreTokenizer] = None, add_fake_edges=False):
+def parse_vast(csv_path) -> Generator[Sample, None, None]:
+    raise NotImplementedError
 
-    def encode_sample(sample: Sample):
-        context = sample.context
-        target = sample.target
-        stance = sample.stance.value
+def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
+    raise NotImplementedError
 
-        if pretokenizer:
-            pre_context = [pair[0] for pair in pretokenizer.pre_tokenize_str(context)]
-            pre_target = [pair[0] for pair in pretokenizer.pre_tokenize_str(target)]
-            result = tokenizer(text=pre_target, text_pair=pre_context, is_split_into_words=True, return_tensors='pt')
+def make_file_parser(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast) -> Callable[[str], Generator[TensorDict, None, None]]:
+    """
+    Returns:
+        Function that takes a file path and returns a generator of samples
+    """
+    if corpus_type == 'graph':
+        def f(file_path: str):
+            sample_gen = parse_graph_tsv(file_path)
+            sample_gen = map(lambda sample: sample.encode(tokenizer), sample_gen)
+            yield from sample_gen
+    else:
+        if corpus_type == 'ezstance':
+            parse_fn = parse_ez_stance
+        elif corpus_type == 'vast':
+            parse_fn = parse_vast
+        elif corpus_type == 'semeval':
+            parse_fn = parse_semeval
         else:
-            result = tokenizer(text=target, text_pair=context, return_tensors='pt')
+            raise ValueError(f"Invalid corpus_type {corpus_type}")
+        def f(file_path: str):
+            for sample in parse_fn(file_path):
+                result = tokenizer(text=sample.target, text_pair=sample.context, return_tensors='pt')
+                result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
+                yield result
+    return f
 
-        result = {k: torch.squeeze(v) for (k, v) in result.items()}
-        n_text_nodes = len(result['input_ids'])
+def make_collate_fn(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast) -> Callable[[TensorDict], TensorDict]:
+    if corpus_type == 'graph':
+        return GraphSample.collate
 
-        edge_ids = []
-        for head in range(n_text_nodes):
-            edge_ids.append( (head, head, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
-            for tail in range(head + 1, n_text_nodes):
-                edge_ids.append( (head, tail, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
-                edge_ids.append( (tail, head, DummyRelationType.TOKEN_TOKEN.value, NodeType.TOKEN.value, NodeType.TOKEN.value) )
-
-        if add_fake_edges:
-            kb_edges, result['kb_ids'] = make_fake_kb_links(n_text_nodes)
-            edge_ids.extend(kb_edges)
-        else:
-            result['kb_ids'] = torch.tensor([], dtype=torch.int64)
-
-        edge_ids.sort()
-        sparse_ids = torch.tensor(edge_ids).transpose(1, 0)
-        result['edge_indices'] = sparse_ids
-        result['stance'] = torch.tensor(stance)
-
-        return result
-
-    return encode_sample
-
-def make_collate_fn(tokenizer):
     token_padding = tokenizer.pad_token_id
     type_padding = tokenizer.pad_token_type_id
     def collate_fn(samples: List[Dict[str, Any]]):
