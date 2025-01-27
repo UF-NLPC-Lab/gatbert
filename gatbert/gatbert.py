@@ -1,5 +1,6 @@
 
 # 3rd Party
+from torch.profiler import record_function
 import torch
 from transformers.models.bert.modeling_bert import BertSelfAttention, \
     BertSelfOutput, \
@@ -128,7 +129,10 @@ class GatbertAttention(torch.nn.Module):
         """
         new_node_states = self.attention(node_states, edge_indices, edge_values)
         new_node_states = self.output(new_node_states, node_states)
-        new_edge_values = self.output(edge_values, edge_values)
+
+        new_edge_values = edge_values
+        # new_edge_values = self.output(edge_values, edge_values)
+
         return (new_node_states, new_edge_values)
 
 class GatbertLayer(torch.nn.Module):
@@ -151,8 +155,11 @@ class GatbertLayer(torch.nn.Module):
         new_node_states = self.intermediate(node_attention_output)
         new_node_states = self.output(new_node_states, node_attention_output)
 
-        new_edge_values = self.intermediate(edge_attention_output)
-        new_edge_values = self.output(new_edge_values, edge_attention_output)
+        # For now, projecting all those edges has proved too expensive
+        # When summed across all layers, these computations were taking over 2/3 of runtime
+        new_edge_values = edge_attention_output
+        # new_edge_values = self.intermediate(edge_attention_output)
+        # new_edge_values = self.output(new_edge_values, edge_attention_output)
 
         return (new_node_states, new_edge_values)
 
