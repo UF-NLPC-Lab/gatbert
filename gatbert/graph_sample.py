@@ -142,6 +142,15 @@ class GraphSample:
         self.kb = kb
         self.edges = edges
 
+    def strip_external(self) -> GraphSample:
+        return GraphSample(
+            stance=self.stance,
+            target=self.target,
+            context=self.context,
+            kb=[],
+            edges=[]
+        )
+
     def encode(self, tokenizer: PreTrainedTokenizerFast) -> Dict[str, torch.Tensor]:
         assert tokenizer.pad_token_id == 0, "Only tokenizers that use 0-padding are supported"
 

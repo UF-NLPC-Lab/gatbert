@@ -78,9 +78,11 @@ def make_file_parser(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast
     Returns:
         Function that takes a file path and returns a generator of samples
     """
-    if corpus_type == 'graph':
+    if corpus_type in {'graph', 'graph_token'}:
         def f(file_path: str):
             sample_gen = parse_graph_tsv(file_path)
+            if corpus_type == 'graph_token':
+                sample_gen = map(GraphSample.strip_external, sample_gen)
             sample_gen = map(lambda sample: sample.encode(tokenizer), sample_gen)
             yield from sample_gen
     else:
@@ -100,7 +102,7 @@ def make_file_parser(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast
     return f
 
 def make_collate_fn(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast) -> Callable[[TensorDict], TensorDict]:
-    if corpus_type == 'graph':
+    if corpus_type in {'graph', 'graph_token'}:
         return GraphSample.collate
 
     token_padding = tokenizer.pad_token_id
