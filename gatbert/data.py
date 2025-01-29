@@ -103,11 +103,15 @@ class Preprocessor:
 
     def __encode_sample(self, sample: Sample) -> TensorDict:
         result = self.tokenizer(text=sample.target, text_pair=sample.context, return_tensors='pt')
+        if 'token_type_ids' in result:
+            result.pop('token_type_ids')
         result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
         return result
 
     def __encode_pretokenized(self, sample: PretokenizedSample) -> TensorDict:
         result = self.tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
+        if 'token_type_ids' in result:
+            result.pop('token_type_ids')
         result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
         return result
 
