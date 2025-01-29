@@ -15,7 +15,7 @@ class StanceModule(L.LightningModule):
         self.__calc = F1Calc()
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters())
+        return torch.optim.Adam(self.parameters(), lr=1e-5)
     def training_step(self, batch, batch_idx):
         labels = batch.pop("stance")
         # Calls the forward method defined in subclass
