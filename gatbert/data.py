@@ -81,6 +81,8 @@ class Preprocessor:
                 parse_fn = map_func_gen(lambda gs: self.__encode_pretokenized(gs.to_sample()), parse_fn)
                 collate_fn = self.__simple_collate
             elif sample_type in {'graph', 'stripped_graph'}:
+                if sample_type == 'stripped_graph':
+                    parse_fn = map_func_gen(GraphSample.strip_external, parse_fn)
                 parse_fn = map_func_gen(lambda gs: gs.encode(self.tokenizer), parse_fn)
                 collate_fn = GraphSample.collate
             else:
