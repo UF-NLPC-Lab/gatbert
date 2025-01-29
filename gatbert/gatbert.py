@@ -35,6 +35,8 @@ class GatbertSelfAttention(torch.nn.Module):
 
         self.__sqrt_attention_size = torch.sqrt(torch.tensor(self.attention_head_size))
 
+        self.use_edge_values = getattr(config, 'use_edge_values', False)
+
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         """
         Adapted from BertSelfAttention HF class
@@ -67,8 +69,12 @@ class GatbertSelfAttention(torch.nn.Module):
         K_node = self.key(node_states)
         V_node = self.value(node_states)
 
-        K_edge_masked = self.transpose_for_scores(self.key(edge_values))
-        V_edge_masked = self.transpose_for_scores(self.value_edge(edge_values))
+        if self.use_edge_values:
+            K_edge_masked = self.transpose_for_scores(self.key(edge_values))
+            V_edge_masked = self.transpose_for_scores(self.value_edge(edge_values))
+        else:
+            K_edge_masked = torch.tensor(0., device=edge_values.device)
+            V_edge_masked = torch.tensor(0., device=edge_values.device)
 
         Q_masked = self.transpose_for_scores(Q[edge_indices[0], edge_indices[1]])                       # (num_edges, num_heads, att_head_size)
         K_node_masked = self.transpose_for_scores(K_node[edge_indices[0], edge_indices[2]])             # (num_edges, num_heads, att_head_size)
