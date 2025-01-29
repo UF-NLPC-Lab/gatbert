@@ -6,13 +6,14 @@ from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, Tuple
-from .data import make_file_parser, make_collate_fn, MapDataset
+from .data import MapDataset, Preprocessor
 from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
-from .types import CorpusType
+from .types import CorpusType, SampleType
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
-                 corpus: CorpusType,
+                 corpus_type: CorpusType,
+                 sample_type: SampleType,
                  batch_size: int = DEFAULT_BATCH_SIZE,
                  tokenizer: str = DEFAULT_MODEL
                 ):
@@ -20,18 +21,18 @@ class StanceDataModule(L.LightningDataModule):
         self.save_hyperparameters()
 
         tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
-
         # Protected variables
-        self._file_parser = make_file_parser(self.hparams.corpus, tokenizer_model)
-        self._collate_fn = make_collate_fn(self.hparams.corpus, tokenizer_model)
+        self._preprocessor = Preprocessor(
+            self.hparams.corpus_type, self.hparams.sample_type, tokenizer_model
+        )
 
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._collate_fn)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
     def _make_val_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._collate_fn)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
     def _make_test_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._collate_fn)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
 
 
 class RandomSplitDataModule(StanceDataModule):
@@ -45,7 +46,6 @@ class RandomSplitDataModule(StanceDataModule):
 
     def __init__(self,
                 partitions: Dict[str, Tuple[float, float, float]],
-                corpus: CorpusType,
                 *parent_args,
                 **parent_kwargs
         ):
@@ -54,7 +54,7 @@ class RandomSplitDataModule(StanceDataModule):
         Partitions is a mapping file_name->(train allocation, val allocation, test allocation).
         That is, for each data file, you specify how many of its samples go to training, validation, and test.
         """
-        super().__init__(*parent_args, corpus=corpus, **parent_kwargs)
+        super().__init__(*parent_args, **parent_kwargs)
         self.save_hyperparameters()
 
         self.__data: Dict[str, MapDataset] = {}
@@ -64,7 +64,7 @@ class RandomSplitDataModule(StanceDataModule):
 
     def prepare_data(self):
         for data_path in self.hparams.partitions:
-            self.__data[data_path] = MapDataset(self._file_parser(data_path))
+            self.__data[data_path] = MapDataset(self._preprocessor.parse_file(data_path))
 
     def setup(self, stage):
         train_dses = []

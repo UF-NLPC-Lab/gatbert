@@ -1,15 +1,15 @@
 # STL
 from __future__ import annotations
 import csv
-from typing import Dict, Any, Generator, List, Callable
-import dataclasses
+from typing import Dict, Any, Generator, List, Callable, Literal
 # 3rd Party
 import torch
 from transformers import PreTrainedTokenizerFast
 from tokenizers.pre_tokenizers import BertPreTokenizer
 # Local
 from .constants import Stance
-from .types import CorpusType, TensorDict
+from .types import CorpusType, SampleType, TensorDict
+from .sample import Sample, PretokenizedSample
 from .graph_sample import GraphSample
 
 
@@ -34,18 +34,6 @@ class MapDataset(torch.utils.data.Dataset):
         return self.__samples[key]
     def __len__(self):
         return len(self.__samples)
-
-@dataclasses.dataclass
-class Sample:
-    context: str
-    target: str
-    stance: Stance
-
-@dataclasses.dataclass
-class PretokenizedSample:
-    context: List[str]
-    target: List[str]
-    stance: Stance
 
 
 def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
@@ -73,56 +61,69 @@ def parse_vast(csv_path) -> Generator[Sample, None, None]:
 def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
     raise NotImplementedError
 
-def make_file_parser(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast) -> Callable[[str], Generator[TensorDict, None, None]]:
-    """
-    Returns:
-        Function that takes a file path and returns a generator of samples
-    """
-    if corpus_type in {'graph', 'graph_token'}:
-        def f(file_path: str):
-            sample_gen = parse_graph_tsv(file_path)
-            if corpus_type == 'graph_token':
-                sample_gen = map(GraphSample.strip_external, sample_gen)
-            sample_gen = map(lambda sample: sample.encode(tokenizer), sample_gen)
-            yield from sample_gen
-    else:
-        if corpus_type == 'ezstance':
-            parse_fn = parse_ez_stance
-        elif corpus_type == 'vast':
-            parse_fn = parse_vast
-        elif corpus_type == 'semeval':
-            parse_fn = parse_semeval
+def map_func_gen(f, func):
+    def mapped(*args, **kwargs):
+        return map(f, func(*args, **kwargs))
+    return mapped
+
+class Preprocessor:
+    def __init__(self,
+                 corpus_type: CorpusType,
+                 sample_type: SampleType,
+                 tokenizer: PreTrainedTokenizerFast):
+        self.corpus_type = corpus_type
+        self.sample_type = sample_type
+        self.tokenizer = tokenizer
+
+        if corpus_type == 'graph':
+            parse_fn = parse_graph_tsv
+            if sample_type == 'token':
+                parse_fn = map_func_gen(lambda gs: self.__encode_pretokenized(gs.to_sample()), parse_fn)
+                collate_fn = self.__simple_collate
+            elif sample_type in {'graph', 'stripped_graph'}:
+                parse_fn = map_func_gen(lambda gs: gs.encode(self.tokenizer), parse_fn)
+                collate_fn = GraphSample.collate
+            else:
+                raise ValueError(f"Invalid sample_type {sample_type}")
         else:
-            raise ValueError(f"Invalid corpus_type {corpus_type}")
-        def f(file_path: str):
-            for sample in parse_fn(file_path):
-                result = tokenizer(text=sample.target, text_pair=sample.context, return_tensors='pt')
-                result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
-                yield result
-    return f
+            assert sample_type == 'token'
+            if corpus_type == 'ezstance':
+                parse_fn = parse_ez_stance
+            elif corpus_type == 'semeval':
+                parse_fn = parse_semeval
+            elif corpus_type == 'vast':
+                parse_fn = parse_vast
+            else:
+                raise ValueError(f"Invalid corpus_type {corpus_type}")
+            parse_fn = map_func_gen(self.__encode_sample, parse_fn)
+            collate_fn = self.__simple_collate
 
-def make_collate_fn(corpus_type: CorpusType, tokenizer: PreTrainedTokenizerFast) -> Callable[[TensorDict], TensorDict]:
-    if corpus_type in {'graph', 'graph_token'}:
-        return GraphSample.collate
+        self.__parse_fn = parse_fn
+        self.__collate_fn = collate_fn
 
-    token_padding = tokenizer.pad_token_id
-    type_padding = tokenizer.pad_token_type_id
-    def collate_fn(samples: List[Dict[str, Any]]):
+    def __encode_sample(self, sample: Sample) -> TensorDict:
+        result = self.tokenizer(text=sample.target, text_pair=sample.context, return_tensors='pt')
+        result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
+        return result
+
+    def __encode_pretokenized(self, sample: PretokenizedSample) -> TensorDict:
+        result = self.tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
+        result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
+        return result
+
+    def __simple_collate(self, samples: List[TensorDict]) -> TensorDict:
+        token_padding = self.tokenizer.pad_token_id
+        type_padding = self.tokenizer.pad_token_type_id
         batched = {}
-        batched['input_ids'] = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples], batch_first=True, padding_value=token_padding)
+        batched['input_ids'] = torch.nn.utils.rnn.pad_sequence([s['input_ids'].squeeze() for s in samples], batch_first=True, padding_value=token_padding)
         if "token_type_ids" in samples[0]:
-            batched['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([s['token_type_ids'] for s in samples], batch_first=True, padding_value=type_padding)
-        batched['kb_ids'] = torch.nn.utils.rnn.pad_sequence([s['kb_ids'] for s in samples], batch_first=True, padding_value=0)
-
+            batched['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([s['token_type_ids'].squeeze() for s in samples], batch_first=True, padding_value=type_padding)
         batched['attention_mask'] = batched['input_ids'] != token_padding
         batched['stance'] = torch.stack([s['stance'] for s in samples], dim=0)
-
-        batch_edges = []
-        for (i, sample_edges) in enumerate(map(lambda s: s['edge_indices'], samples)):
-            batch_edges.append(torch.concatenate([
-                torch.full(size=(1, sample_edges.shape[1]), fill_value=i),
-                sample_edges
-            ]))
-        batched['edge_indices'] = torch.concatenate(batch_edges, dim=-1)
         return batched
-    return collate_fn
+
+    def parse_file(self, path) -> Generator[TensorDict, None, None]:
+        yield from self.__parse_fn(path)
+
+    def collate(self, samples: TensorDict) -> TensorDict:
+        return self.__collate_fn(samples)

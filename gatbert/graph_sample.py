@@ -10,6 +10,7 @@ import torch
 from transformers import PreTrainedTokenizerFast
 # Local
 from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID, MAX_KB_NODES
+from .sample import Sample, PretokenizedSample
 
 
 @dataclasses.dataclass
@@ -150,6 +151,9 @@ class GraphSample:
             kb=[],
             edges=[]
         )
+
+    def to_sample(self) -> PretokenizedSample:
+        return PretokenizedSample(context=self.context, target=self.target, stance=self.stance)
 
     def encode(self, tokenizer: PreTrainedTokenizerFast) -> Dict[str, torch.Tensor]:
         assert tokenizer.pad_token_id == 0, "Only tokenizers that use 0-padding are supported"

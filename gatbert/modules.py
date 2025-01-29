@@ -5,7 +5,7 @@ from transformers import AutoConfig, AutoModel
 # Local
 from .f1_calc import F1Calc
 from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS
-from .stance_classifier import StanceClassifier
+from .stance_classifier import GraphClassifier, BertClassifier
 
 class StanceModule(L.LightningModule):
     def __init__(self):
@@ -51,7 +51,7 @@ class StanceModule(L.LightningModule):
         self.log(f"{prefix}_macro_f1", calc.macro_f1)
         calc.reset()
 
-class CNStanceModule(StanceModule):
+class GraphStanceModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
                  load_pretrained_weights: bool = True):
@@ -59,7 +59,7 @@ class CNStanceModule(StanceModule):
         self.save_hyperparameters()
 
         model_config = AutoConfig.from_pretrained(self.hparams.pretrained_model)
-        self.__classifier = StanceClassifier(model_config, NUM_CN_RELATIONS)
+        self.__classifier = GraphClassifier(model_config, NUM_CN_RELATIONS)
         if self.hparams.load_pretrained_weights:
             orig_model = AutoModel.from_pretrained(self.hparams.pretrained_model)
             self.__classifier.bert.load_pretrained_weights(orig_model)
@@ -67,3 +67,12 @@ class CNStanceModule(StanceModule):
     def forward(self, *args, **kwargs):
         return self.__classifier(*args, **kwargs)
     
+class BertStanceModule(StanceModule):
+    def __init__(self,
+                 pretrained_model: str = DEFAULT_MODEL):
+        super().__init__()
+        self.save_hyperparameters()
+        self.__classifier = BertClassifier(pretrained_model)
+
+    def forward(self, *args, **kwargs):
+        return self.__classifier(*args, **kwargs)
