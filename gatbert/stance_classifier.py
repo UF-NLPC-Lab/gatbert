@@ -1,6 +1,6 @@
 # 3rd Party
 import torch
-from transformers import AutoModel
+from transformers import AutoModel, BertModel
 # Local
 from .gatbert import GatbertModel
 from .constants import Stance
@@ -11,7 +11,8 @@ class GraphClassifier(torch.nn.Module):
         self.bert = GatbertModel(config, n_relations=n_relations)
         self.projection = torch.nn.Linear(
             config.hidden_size,
-            out_features=len(Stance)
+            out_features=len(Stance),
+            bias=False
         )
     def forward(self, input_ids: torch.Tensor, node_mask: torch.Tensor, edge_indices: torch.Tensor):
         (final_hidden_state, _) = self.bert(input_ids, node_mask, edge_indices)
@@ -24,7 +25,8 @@ class BertClassifier(torch.nn.Module):
         self.bert = AutoModel.from_pretrained(pretrained_model_name)
         self.projection = torch.nn.Linear(
             self.bert.config.hidden_size,
-            out_features=len(Stance)
+            out_features=len(Stance),
+            bias=False
         )
     def forward(self, *args, **kwargs):
         bert_output = self.bert(*args, **kwargs)
