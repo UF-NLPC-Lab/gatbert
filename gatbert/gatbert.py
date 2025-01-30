@@ -1,6 +1,5 @@
 
 # 3rd Party
-from torch.profiler import record_function
 import torch
 from transformers.models.bert.modeling_bert import BertSelfAttention, \
     BertSelfOutput, \
@@ -236,8 +235,12 @@ class GatbertModel(torch.nn.Module):
         self.embeddings.load_pretrained_weights(other.embeddings)
         self.encoder.load_pretrained_weights(other.encoder)
 
-    def forward(self, input_ids: torch.Tensor, node_mask: torch.Tensor, edge_indices: torch.Tensor):
-        node_states = self.embeddings(input_ids, node_mask)
+    def forward(self,
+                input_ids: torch.Tensor,
+                pooling_mask: torch.Tensor,
+                edge_indices: torch.Tensor,
+                edge_mask: torch.Tensor):
+        node_states = self.embeddings(input_ids, pooling_mask)
         (batch_size, n_nodes) = node_states.shape[:2]
 
         # All the indices save the relation IDs
@@ -245,9 +248,10 @@ class GatbertModel(torch.nn.Module):
         relation_indices = edge_indices[-1]
 
         edge_values = self.relation_embeddings(relation_indices)
+        masked_edge_values = torch.unsqueeze(edge_mask, -1) * edge_values
         edge_states = torch.sparse_coo_tensor(
             indices=simple_edge_indices,
-            values=edge_values,
+            values=masked_edge_values,
             size=(batch_size, n_nodes, n_nodes, edge_values.shape[-1]),
             requires_grad=True,
             is_coalesced=False

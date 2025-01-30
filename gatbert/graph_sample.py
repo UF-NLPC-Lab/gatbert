@@ -255,10 +255,11 @@ class GraphSample:
         # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
         # Need a 0 at the beginning for batch
         new_edges = []
+        edge_mask = []
         # The original token-to-token edges of a standard BERT model
         num_text_tokens = tokenized_text['input_ids'].shape[-1]
         new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
-        new_edges.extend((0, tail, head, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
+        edge_mask.extend(False for _ in range(len(new_edges)))
 
         # The edges that we read from the file.
         # Update their head/tail indices to account for subwords and special tokens
@@ -267,16 +268,21 @@ class GraphSample:
             if edge.head_node_index not in expand_list or edge.tail_node_index not in expand_list:
                 discarded += 1
                 continue
-            expand_list[edge.tail_node_index]
-            new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(expand_list[edge.head_node_index], expand_list[edge.tail_node_index]))
+
+            head_expansions = expand_list[edge.head_node_index]
+            tail_expansions = expand_list[edge.tail_node_index]
+            new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(head_expansions, tail_expansions))
+            edge_mask.extend(True for _ in range(len(head_expansions) * len(tail_expansions)))
         new_edges.sort()
         GraphSample.LOGGER.debug("Discarded %s/%s edges.", discarded, len(self.edges))
 
         new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
+        edge_mask = torch.tensor(edge_mask, device=device)
         return {
             "input_ids" : concat_ids,
-            "node_mask" : node_mask,
+            "pooling_mask" : node_mask,
             "edge_indices": new_edges,
+            "edge_mask": edge_mask,
             "stance": torch.tensor(self.stance.value, device=device)
         }
 
@@ -285,38 +291,43 @@ class GraphSample:
         max_nodes = -1
         max_subwords = -1
         new_edge_indices = []
-        new_mask_indices = []
-        new_mask_values = []
+        new_edge_mask = []
+        new_pool_indices = []
+        new_pool_values = []
+
         for (i, s) in enumerate(samples):
             # edge indices
             edge_indices = s['edge_indices']
             edge_indices[0, :] = i
             new_edge_indices.append(edge_indices)
+            new_edge_mask.append(s['edge_mask'])
 
             # node mask
-            node_mask = s['node_mask']
-            (_, num_nodes, num_subwords) = node_mask.shape
+            pooling_mask = s['pooling_mask']
+            (_, num_nodes, num_subwords) = pooling_mask.shape
             max_nodes    = max(max_nodes, num_nodes)
             max_subwords = max(max_subwords, num_subwords)
-            indices = node_mask.indices()
+            indices = pooling_mask.indices()
             indices[0, :] = i
-            new_mask_indices.append(indices)
-            new_mask_values.append(node_mask.values())
+            new_pool_indices.append(indices)
+            new_pool_values.append(pooling_mask.values())
 
         new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
+        new_edge_mask = torch.concatenate(new_edge_mask, dim=-1)
         batch_node_mask = torch.sparse_coo_tensor(
-            indices=torch.concatenate(new_mask_indices, dim=-1),
-            values=torch.concatenate(new_mask_values, dim=-1),
+            indices=torch.concatenate(new_pool_indices, dim=-1),
+            values=torch.concatenate(new_pool_values, dim=-1),
             size=(len(samples), max_nodes, max_subwords),
-            device=node_mask.device,
+            device=pooling_mask.device,
             is_coalesced=True,
             requires_grad=True
         )
         new_input_ids = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples], batch_first=True)
         return {
             'input_ids': new_input_ids,
-            'node_mask': batch_node_mask,
+            'pooling_mask': batch_node_mask,
             'edge_indices': new_edge_indices,
+            'edge_mask': new_edge_mask,
             "stance": torch.stack([s['stance'] for s in samples])
         }
 
