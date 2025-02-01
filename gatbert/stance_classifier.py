@@ -14,8 +14,8 @@ class GraphClassifier(torch.nn.Module):
             out_features=len(Stance),
             bias=False
         )
-    def forward(self, input_ids: torch.Tensor, pooling_mask: torch.Tensor, edge_indices: torch.Tensor):
-        final_hidden_state = self.bert(input_ids, pooling_mask, edge_indices)
+    def forward(self, *args, **kwargs):
+        final_hidden_state = self.bert(*args, **kwargs)
         logits = self.projection(final_hidden_state[:, 0])
         return logits
 

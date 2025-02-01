@@ -25,17 +25,6 @@ class NodeType(enum.Enum):
     TOKEN = 1
     KB = 2
 
-@enum.unique
-class DummyRelationType(enum.Enum):
-    """
-    Fake relations to use when debugging
-    """
-    PADDING = 0
-    TOKEN_TOKEN = 1
-    TOKEN_KB = 2
-    KB_TOKEN = 3
-    KB_KB = 4
-
 ENCODED_FIELDS = {
     "stance",
     "input_ids",
@@ -61,11 +50,6 @@ Maximum number of subwords to allow from external (not text) data.
 DEFAULT_BATCH_SIZE = 4
 
 DEFAULT_MAX_DEGREE = 50
-
-NUM_FAKE_NODES = 1000
-"""
-Used for dummy routines testing graph logic
-"""
 
 DEFAULT_PG_ARGS = "dbname='conceptnet5' host='127.0.0.1'"
 """

@@ -173,6 +173,11 @@ class GraphSample:
                                  return_offsets_mapping=True,
                                  return_tensors='pt')
         device = tokenized_text['input_ids'].device
+        position_ids = torch.tensor(
+            [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
+            [0 for _ in range(tokenized_kb['input_ids'].shape[-1])],
+            device=device
+        )
 
         relevant_keys = ['input_ids', 'offset_mapping']
         tokenized_text = {k:tokenized_text[k] for k in relevant_keys}
@@ -230,6 +235,7 @@ class GraphSample:
         concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
         # The tokenizer already did truncation for tokens, but this is where we do truncation for external nodes
         concat_ids = concat_ids[..., :subword_index]
+        position_ids = position_ids[:subword_index]
 
         num_new_nodes = new_nodes_index + 1
 
@@ -276,6 +282,7 @@ class GraphSample:
         new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
         return {
             "input_ids" : concat_ids,
+            "position_ids": position_ids,
             "pooling_mask" : node_mask,
             "edge_indices": new_edges,
             "stance": torch.tensor(self.stance.value, device=device)
@@ -315,8 +322,10 @@ class GraphSample:
             requires_grad=True
         )
         new_input_ids = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples], batch_first=True)
+        new_position_ids = torch.nn.utils.rnn.pad_sequence([s['position_ids'] for s in samples], batch_first=True)
         return {
             'input_ids': new_input_ids,
+            'position_ids': new_position_ids,
             'pooling_mask': batch_node_mask,
             'edge_indices': new_edge_indices,
             "stance": torch.stack([s['stance'] for s in samples])
