@@ -113,8 +113,6 @@ class Preprocessor:
 
     def __encode_pretokenized(self, sample: PretokenizedSample) -> TensorDict:
         result = self.tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
-        if 'token_type_ids' in result:
-            result.pop('token_type_ids')
         result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
         return result
 
@@ -132,5 +130,5 @@ class Preprocessor:
     def parse_file(self, path) -> Generator[TensorDict, None, None]:
         yield from self.__parse_fn(path)
 
-    def collate(self, samples: TensorDict) -> TensorDict:
+    def collate(self, samples: List[TensorDict]) -> TensorDict:
         return self.__collate_fn(samples)
