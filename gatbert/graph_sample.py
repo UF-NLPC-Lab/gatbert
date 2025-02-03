@@ -345,10 +345,6 @@ class GraphSample:
     def to_sample(self) -> PretokenizedSample:
         return PretokenizedSample(context=self.context, target=self.target, stance=self.stance)
 
-    def encode(self, tokenizer: PreTrainedTokenizerFast) -> Dict[str, torch.Tensor]:
-        assert tokenizer.pad_token_id == 0, "Only tokenizers that use 0-padding are supported"
-
-
     def to_row(self) -> List[str]:
         rval= [str(self.stance.value),
                 str(len(self.target)),
