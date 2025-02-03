@@ -210,7 +210,7 @@ class GatbertEmbeddings(torch.nn.Module):
         self.layer_norm.load_state_dict(other.LayerNorm.state_dict())
 
     def forward(self,
-                subword_ids: torch.Tensor,
+                input_ids: torch.Tensor,
                 pooling_mask: torch.Tensor,
                 position_ids: Optional[torch.Tensor] = None):
         if not pooling_mask.is_coalesced():
@@ -218,7 +218,7 @@ class GatbertEmbeddings(torch.nn.Module):
         (batch_size, max_nodes, max_subnodes) = pooling_mask.shape
 
         # (batch_size, max_subnodes, embedding)
-        subnode_embeddings = self.word_embeddings(subword_ids)
+        subnode_embeddings = self.word_embeddings(input_ids)
         if position_ids is not None:
             pos_embed = self.position_embeddings(position_ids)
             subnode_embeddings += pos_embed

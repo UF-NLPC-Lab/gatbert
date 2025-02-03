@@ -131,6 +131,188 @@ class GraphSample:
                                edges=list(self.edges)
             )
 
+    class Encoder:
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer    
+
+        def encode(self, sample: GraphSample):
+            tokenizer = self.__tokenizer
+            # FIXME: This is assuming all the KB tokens are conceptnet URIs
+            clean_kb = [uri.split('/')[3] for uri in sample.kb]
+            clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
+
+            tokenized_text = tokenizer(text=sample.target,
+                                       text_pair=sample.context,
+                                       is_split_into_words=True,
+                                       return_offsets_mapping=True,
+                                       return_tensors='pt',
+                                       truncation='longest_first')
+            tokenized_kb = tokenizer(text=clean_kb,
+                                     is_split_into_words=True,
+                                     return_offsets_mapping=True,
+                                     return_tensors='pt')
+            device = tokenized_text['input_ids'].device
+            position_ids = torch.tensor(
+                [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
+                [0 for _ in range(tokenized_kb['input_ids'].shape[-1])],
+                device=device
+            )
+
+            relevant_keys = ['input_ids', 'offset_mapping']
+            tokenized_text = {k:tokenized_text[k] for k in relevant_keys}
+            tokenized_kb = {k:tokenized_kb[k] for k in relevant_keys}
+            # Assumes the tokens with 0-length offsets are special tokens
+            real_toks = tokenized_kb['offset_mapping'][0, :, 1] != 0
+            for k in relevant_keys:
+                tokenized_kb[k] = tokenized_kb[k][:, real_toks]
+
+            # old_node_index -> [new_node_indices]
+            expand_list = defaultdict(list)
+            # new_node_index -> [subword_indices]
+            pool_inds = OrderedDict()
+
+            new_nodes_index = -1
+            orig_nodes_index = -1
+
+            # For token subwords, we will split a token's nodes into subwords
+            token_offset_mapping = tokenized_text['offset_mapping'].squeeze()
+            # Handle splitting of token nodes into subword nodes
+            for (subword_index, (start, end)) in enumerate(token_offset_mapping):
+                new_nodes_index += 1
+                pool_inds[new_nodes_index] = []
+
+                if start != end: # Real character, not a special character
+                    if start == 0: # Start of a token
+                        orig_nodes_index += 1
+                    expand_list[orig_nodes_index].append(new_nodes_index)
+                pool_inds[new_nodes_index].append(subword_index)
+
+
+            # Need to fast-forward past the token nodes to the external ones
+            # Some of the token nodes may have been truncated by the tokenizer
+            orig_nodes_index = len(sample.target) + len(sample.context) - 1
+
+            # For KB subwords, we plan to pool each into one combined node
+            kb_offset_mapping = tokenized_kb['offset_mapping'].squeeze()
+            n_kb_nodes = 0
+            for (subword_index, (start, end)) in enumerate(kb_offset_mapping, start=subword_index + 1):
+                if start == 0:
+                    assert end != 0, "Special tokens should have been scrubbed"
+                    if n_kb_nodes >= MAX_KB_NODES:
+                        GraphSample.LOGGER.debug("Discarded %s/%s of external nodes", len(sample.kb) - n_kb_nodes, len(sample.kb))
+                        break
+                    n_kb_nodes += 1
+                    new_nodes_index += 1
+                    pool_inds[new_nodes_index] = []
+                    orig_nodes_index += 1
+                    expand_list[orig_nodes_index].append(new_nodes_index)
+                pool_inds[new_nodes_index].append(subword_index)
+            else:
+                # Needs to be 1 greater than the last subword we included
+                subword_index += 1
+
+            concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
+            # The tokenizer already did truncation for tokens, but this is where we do truncation for external nodes
+            concat_ids = concat_ids[..., :subword_index]
+            position_ids = position_ids[:subword_index]
+
+            num_new_nodes = new_nodes_index + 1
+
+            mask_indices = []
+            mask_values = []
+            for (new_node_ind, subword_inds) in pool_inds.items():
+                mask_indices.extend((0, new_node_ind, subword_ind) for subword_ind in subword_inds)
+                v = 1 / len(subword_inds)
+                mask_values.extend(v for _ in subword_inds)
+
+            mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
+            mask_values = torch.tensor(mask_values, device=device)
+            node_mask = torch.sparse_coo_tensor(
+                indices=mask_indices,
+                values=mask_values,
+                size=(1, num_new_nodes, concat_ids.shape[-1]),
+                is_coalesced=True,
+                requires_grad=True,
+                dtype=torch.float,
+                device=device
+            )
+
+            # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
+            # Need a 0 at the beginning for batch
+            new_edges = []
+            # The original token-to-token edges of a standard BERT model
+            num_text_tokens = tokenized_text['input_ids'].shape[-1]
+            new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
+
+            # The edges that we read from the file.
+            # Update their head/tail indices to account for subwords and special tokens
+            discarded = 0
+            for edge in sample.edges:
+                if edge.head_node_index not in expand_list or edge.tail_node_index not in expand_list:
+                    discarded += 1
+                    continue
+
+                head_expansions = expand_list[edge.head_node_index]
+                tail_expansions = expand_list[edge.tail_node_index]
+                new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(head_expansions, tail_expansions))
+            new_edges.sort()
+            GraphSample.LOGGER.debug("Discarded %s/%s edges.", discarded, len(sample.edges))
+
+            new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
+            return {
+                "input_ids" : concat_ids,
+                "position_ids": position_ids,
+                "pooling_mask" : node_mask,
+                "edge_indices": new_edges,
+                "stance": torch.tensor(sample.stance.value, device=device)
+            }
+
+        def collate(self, samples: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            tokenizer = self.__tokenizer
+            max_nodes = -1
+            max_subwords = -1
+            new_edge_indices = []
+            new_pool_indices = []
+            new_pool_values = []
+
+            for (i, s) in enumerate(samples):
+                # edge indices
+                edge_indices = s['edge_indices']
+                edge_indices[0, :] = i
+                new_edge_indices.append(edge_indices)
+
+                # node mask
+                pooling_mask = s['pooling_mask']
+                (_, num_nodes, num_subwords) = pooling_mask.shape
+                max_nodes    = max(max_nodes, num_nodes)
+                max_subwords = max(max_subwords, num_subwords)
+                indices = pooling_mask.indices()
+                indices[0, :] = i
+                new_pool_indices.append(indices)
+                new_pool_values.append(pooling_mask.values())
+
+            new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
+            batch_node_mask = torch.sparse_coo_tensor(
+                indices=torch.concatenate(new_pool_indices, dim=-1),
+                values=torch.concatenate(new_pool_values, dim=-1),
+                size=(len(samples), max_nodes, max_subwords),
+                device=pooling_mask.device,
+                is_coalesced=True,
+                requires_grad=True
+            )
+            new_input_ids = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples],
+                                                            batch_first=True, padding_value=tokenizer.pad_token_id)
+            new_position_ids = torch.nn.utils.rnn.pad_sequence([s['position_ids'] for s in samples],
+                                                               batch_first=True)
+            return {
+                'input_ids': new_input_ids,
+                'position_ids': new_position_ids,
+                'pooling_mask': batch_node_mask,
+                'edge_indices': new_edge_indices,
+                "stance": torch.stack([s['stance'] for s in samples])
+            }
+
+
     def __init__(self,
                  stance: Stance,
                  target: List[str],
@@ -142,6 +324,14 @@ class GraphSample:
         self.context = context
         self.kb = kb
         self.edges = edges
+
+    @staticmethod
+    def from_pretokenized(s: PretokenizedSample):
+        return GraphSample(stance=s.stance,
+                           target=s.target,
+                           context=s.context,
+                           kb=[],
+                           edges=[])
 
     def strip_external(self) -> GraphSample:
         return GraphSample(
@@ -158,178 +348,6 @@ class GraphSample:
     def encode(self, tokenizer: PreTrainedTokenizerFast) -> Dict[str, torch.Tensor]:
         assert tokenizer.pad_token_id == 0, "Only tokenizers that use 0-padding are supported"
 
-        # FIXME: This is assuming all the KB tokens are conceptnet URIs
-        clean_kb = [uri.split('/')[3] for uri in self.kb]
-        clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
-
-        tokenized_text = tokenizer(text=self.target,
-                                   text_pair=self.context,
-                                   is_split_into_words=True,
-                                   return_offsets_mapping=True,
-                                   return_tensors='pt',
-                                   truncation='longest_first')
-        tokenized_kb = tokenizer(text=clean_kb,
-                                 is_split_into_words=True,
-                                 return_offsets_mapping=True,
-                                 return_tensors='pt')
-        device = tokenized_text['input_ids'].device
-        position_ids = torch.tensor(
-            [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
-            [0 for _ in range(tokenized_kb['input_ids'].shape[-1])],
-            device=device
-        )
-
-        relevant_keys = ['input_ids', 'offset_mapping']
-        tokenized_text = {k:tokenized_text[k] for k in relevant_keys}
-        tokenized_kb = {k:tokenized_kb[k] for k in relevant_keys}
-        # Assumes the tokens with 0-length offsets are special tokens
-        real_toks = tokenized_kb['offset_mapping'][0, :, 1] != 0
-        for k in relevant_keys:
-            tokenized_kb[k] = tokenized_kb[k][:, real_toks]
-
-        # old_node_index -> [new_node_indices]
-        expand_list = defaultdict(list)
-        # new_node_index -> [subword_indices]
-        pool_inds = OrderedDict()
-
-        new_nodes_index = -1
-        orig_nodes_index = -1
-
-        # For token subwords, we will split a token's nodes into subwords
-        token_offset_mapping = tokenized_text['offset_mapping'].squeeze()
-        # Handle splitting of token nodes into subword nodes
-        for (subword_index, (start, end)) in enumerate(token_offset_mapping):
-            new_nodes_index += 1
-            pool_inds[new_nodes_index] = []
-
-            if start != end: # Real character, not a special character
-                if start == 0: # Start of a token
-                    orig_nodes_index += 1
-                expand_list[orig_nodes_index].append(new_nodes_index)
-            pool_inds[new_nodes_index].append(subword_index)
-
-
-        # Need to fast-forward past the token nodes to the external ones
-        # Some of the token nodes may have been truncated by the tokenizer
-        orig_nodes_index = len(self.target) + len(self.context) - 1
-
-        # For KB subwords, we plan to pool each into one combined node
-        kb_offset_mapping = tokenized_kb['offset_mapping'].squeeze()
-        n_kb_nodes = 0
-        for (subword_index, (start, end)) in enumerate(kb_offset_mapping, start=subword_index + 1):
-            if start == 0:
-                assert end != 0, "Special tokens should have been scrubbed"
-                if n_kb_nodes >= MAX_KB_NODES:
-                    GraphSample.LOGGER.debug("Discarded %s/%s of external nodes", len(self.kb) - n_kb_nodes, len(self.kb))
-                    break
-                n_kb_nodes += 1
-                new_nodes_index += 1
-                pool_inds[new_nodes_index] = []
-                orig_nodes_index += 1
-                expand_list[orig_nodes_index].append(new_nodes_index)
-            pool_inds[new_nodes_index].append(subword_index)
-        else:
-            # Needs to be 1 greater than the last subword we included
-            subword_index += 1
-
-        concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
-        # The tokenizer already did truncation for tokens, but this is where we do truncation for external nodes
-        concat_ids = concat_ids[..., :subword_index]
-        position_ids = position_ids[:subword_index]
-
-        num_new_nodes = new_nodes_index + 1
-
-        mask_indices = []
-        mask_values = []
-        for (new_node_ind, subword_inds) in pool_inds.items():
-            mask_indices.extend((0, new_node_ind, subword_ind) for subword_ind in subword_inds)
-            v = 1 / len(subword_inds)
-            mask_values.extend(v for _ in subword_inds)
-
-        mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
-        mask_values = torch.tensor(mask_values, device=device)
-        node_mask = torch.sparse_coo_tensor(
-            indices=mask_indices,
-            values=mask_values,
-            size=(1, num_new_nodes, concat_ids.shape[-1]),
-            is_coalesced=True,
-            requires_grad=True,
-            dtype=torch.float,
-            device=device
-        )
-
-        # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
-        # Need a 0 at the beginning for batch
-        new_edges = []
-        # The original token-to-token edges of a standard BERT model
-        num_text_tokens = tokenized_text['input_ids'].shape[-1]
-        new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
-
-        # The edges that we read from the file.
-        # Update their head/tail indices to account for subwords and special tokens
-        discarded = 0
-        for edge in self.edges:
-            if edge.head_node_index not in expand_list or edge.tail_node_index not in expand_list:
-                discarded += 1
-                continue
-
-            head_expansions = expand_list[edge.head_node_index]
-            tail_expansions = expand_list[edge.tail_node_index]
-            new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(head_expansions, tail_expansions))
-        new_edges.sort()
-        GraphSample.LOGGER.debug("Discarded %s/%s edges.", discarded, len(self.edges))
-
-        new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
-        return {
-            "input_ids" : concat_ids,
-            "position_ids": position_ids,
-            "pooling_mask" : node_mask,
-            "edge_indices": new_edges,
-            "stance": torch.tensor(self.stance.value, device=device)
-        }
-
-    @staticmethod
-    def collate(samples: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        max_nodes = -1
-        max_subwords = -1
-        new_edge_indices = []
-        new_pool_indices = []
-        new_pool_values = []
-
-        for (i, s) in enumerate(samples):
-            # edge indices
-            edge_indices = s['edge_indices']
-            edge_indices[0, :] = i
-            new_edge_indices.append(edge_indices)
-
-            # node mask
-            pooling_mask = s['pooling_mask']
-            (_, num_nodes, num_subwords) = pooling_mask.shape
-            max_nodes    = max(max_nodes, num_nodes)
-            max_subwords = max(max_subwords, num_subwords)
-            indices = pooling_mask.indices()
-            indices[0, :] = i
-            new_pool_indices.append(indices)
-            new_pool_values.append(pooling_mask.values())
-
-        new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
-        batch_node_mask = torch.sparse_coo_tensor(
-            indices=torch.concatenate(new_pool_indices, dim=-1),
-            values=torch.concatenate(new_pool_values, dim=-1),
-            size=(len(samples), max_nodes, max_subwords),
-            device=pooling_mask.device,
-            is_coalesced=True,
-            requires_grad=True
-        )
-        new_input_ids = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples], batch_first=True)
-        new_position_ids = torch.nn.utils.rnn.pad_sequence([s['position_ids'] for s in samples], batch_first=True)
-        return {
-            'input_ids': new_input_ids,
-            'position_ids': new_position_ids,
-            'pooling_mask': batch_node_mask,
-            'edge_indices': new_edge_indices,
-            "stance": torch.stack([s['stance'] for s in samples])
-        }
 
     def to_row(self) -> List[str]:
         rval= [str(self.stance.value),
