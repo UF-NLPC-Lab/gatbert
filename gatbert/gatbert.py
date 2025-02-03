@@ -201,18 +201,21 @@ class GatbertEmbeddings(torch.nn.Module):
         super().__init__()
         self.word_embeddings = torch.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.position_embeddings = torch.nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.token_type_embeddings = torch.nn.Embedding(config.type_vocab_size, config.hidden_size)
         self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
     def load_pretrained_weights(self, other: BertEmbeddings):
         self.word_embeddings.load_state_dict(other.word_embeddings.state_dict())
         self.position_embeddings.load_state_dict(other.position_embeddings.state_dict())
+        self.token_type_embeddings.load_state_dict(other.token_type_embeddings.state_dict())
         self.layer_norm.load_state_dict(other.LayerNorm.state_dict())
 
     def forward(self,
                 input_ids: torch.Tensor,
                 pooling_mask: torch.Tensor,
-                position_ids: Optional[torch.Tensor] = None):
+                position_ids: Optional[torch.Tensor] = None,
+                token_type_ids: Optional[torch.Tensor] = None):
         if not pooling_mask.is_coalesced():
             pooling_mask = pooling_mask.coalesce()
         (batch_size, max_nodes, max_subnodes) = pooling_mask.shape
@@ -222,6 +225,9 @@ class GatbertEmbeddings(torch.nn.Module):
         if position_ids is not None:
             pos_embed = self.position_embeddings(position_ids)
             subnode_embeddings += pos_embed
+        if token_type_ids is not None:
+            tok_type_embed = self.token_type_embeddings(token_type_ids)
+            subnode_embeddings += tok_type_embed
         # (batch_size * max_subnodes, embedding)
         subnode_embeddings = torch.flatten(subnode_embeddings, end_dim=-2)
 
@@ -264,7 +270,8 @@ class GatbertModel(torch.nn.Module):
                 input_ids: torch.Tensor,
                 pooling_mask: torch.Tensor,
                 edge_indices: torch.Tensor,
-                position_ids: Optional[torch.Tensor] = None):
-        node_states = self.embeddings(input_ids, pooling_mask, position_ids=position_ids)
+                position_ids: Optional[torch.Tensor] = None,
+                token_type_ids: Optional[torch.Tensor] = None):
+        node_states = self.embeddings(input_ids, pooling_mask, position_ids=position_ids, token_type_ids=token_type_ids)
 
         return self.encoder(node_states, edge_indices) #, edge_states.values())

@@ -150,21 +150,32 @@ class GraphSample:
             tokenized_kb = tokenizer(text=clean_kb,
                                      is_split_into_words=True,
                                      return_offsets_mapping=True,
+                                     return_special_tokens_mask=True,
                                      return_tensors='pt')
+            tokenized_text = {k:torch.squeeze(tokenized_text[k]) for k in ['input_ids', 'offset_mapping', 'token_type_ids']}
+            tokenized_kb = {k:torch.squeeze(tokenized_kb[k]) for k in ['input_ids', 'offset_mapping', 'special_tokens_mask']}
             device = tokenized_text['input_ids'].device
+
+            # Exclude the CLS and SEP tokens
+            # FIXME: Works fine for BERT, might not work for Roberta and others
+            real_inds = torch.where(~tokenized_kb['special_tokens_mask'].bool())
+            tokenized_kb = {
+                'input_ids': tokenized_kb['input_ids'][real_inds],
+                'offset_mapping': tokenized_kb['offset_mapping'][real_inds]
+            }
+
             position_ids = torch.tensor(
                 [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
                 [0 for _ in range(tokenized_kb['input_ids'].shape[-1])],
                 device=device
             )
-
-            relevant_keys = ['input_ids', 'offset_mapping']
-            tokenized_text = {k:tokenized_text[k] for k in relevant_keys}
-            tokenized_kb = {k:tokenized_kb[k] for k in relevant_keys}
-            # Assumes the tokens with 0-length offsets are special tokens
-            real_toks = tokenized_kb['offset_mapping'][0, :, 1] != 0
-            for k in relevant_keys:
-                tokenized_kb[k] = tokenized_kb[k][:, real_toks]
+            last_token_type_id = tokenized_text['token_type_ids'][-1]
+            token_type_ids = torch.concatenate([
+                tokenized_text['token_type_ids'],
+                torch.full_like(tokenized_kb['input_ids'], last_token_type_id)
+                ],
+                dim=-1
+            )
 
             # old_node_index -> [new_node_indices]
             expand_list = defaultdict(list)
@@ -211,10 +222,11 @@ class GraphSample:
                 # Needs to be 1 greater than the last subword we included
                 subword_index += 1
 
-            concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1).squeeze()
+            concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1)
             # The tokenizer already did truncation for tokens, but this is where we do truncation for external nodes
-            concat_ids = concat_ids[..., :subword_index]
+            concat_ids = concat_ids[:subword_index]
             position_ids = position_ids[:subword_index]
+            token_type_ids = token_type_ids[:subword_index]
 
             num_new_nodes = new_nodes_index + 1
 
@@ -260,8 +272,9 @@ class GraphSample:
 
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
             return {
-                "input_ids" : concat_ids,
-                "position_ids": position_ids,
+                "input_ids" : torch.unsqueeze(concat_ids, 0),
+                "position_ids": torch.unsqueeze(position_ids, 0),
+                "token_type_ids": torch.unsqueeze(token_type_ids, 0),
                 "pooling_mask" : node_mask,
                 "edge_indices": new_edges,
                 "stance": torch.tensor(sample.stance.value, device=device)
@@ -300,13 +313,17 @@ class GraphSample:
                 is_coalesced=True,
                 requires_grad=True
             )
-            new_input_ids = torch.nn.utils.rnn.pad_sequence([s['input_ids'] for s in samples],
+            new_input_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['input_ids'], 0) for s in samples],
                                                             batch_first=True, padding_value=tokenizer.pad_token_id)
-            new_position_ids = torch.nn.utils.rnn.pad_sequence([s['position_ids'] for s in samples],
+            # FIXME: Need a custom pad value for this?
+            new_position_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['position_ids'], 0) for s in samples],
                                                                batch_first=True)
+            new_token_type_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['token_type_ids'], 0) for s in samples],
+                                                               batch_first=True, padding_value=tokenizer.pad_token_type_id)
             return {
                 'input_ids': new_input_ids,
                 'position_ids': new_position_ids,
+                'token_type_ids': new_token_type_ids,
                 'pooling_mask': batch_node_mask,
                 'edge_indices': new_edge_indices,
                 "stance": torch.stack([s['stance'] for s in samples])
