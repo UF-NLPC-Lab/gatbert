@@ -115,7 +115,7 @@ class GatbertSelfAttention(torch.nn.Module):
             is_coalesced=True,
             requires_grad=True
         )
-        sparse_attention = torch.sparse.softmax(logits, dim=-1)
+        sparse_attention = torch.sparse.softmax(logits, dim=-2)
         attention_vals = sparse_attention.values()
         attention_vals = self.dropout(attention_vals)
 
@@ -151,16 +151,16 @@ class GatbertAttention(torch.nn.Module):
         self.attention.load_pretrained_weights(other.self)
         self.output.load_state_dict(other.output.state_dict())
 
-    def forward(self, node_states: torch.Tensor, edge_indices: torch.Tensor):
+    def forward(self, hidden_states: torch.Tensor, edge_indices: torch.Tensor):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edge_states: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
         """
-        new_node_states = self.attention(node_states, edge_indices)
-        new_node_states = self.output(new_node_states, node_states)
+        self_outputs = self.attention(hidden_states, edge_indices)
+        outputs = self.output(self_outputs, hidden_states)
 
-        return (new_node_states)
+        return outputs
 
 class GatbertLayer(torch.nn.Module):
     """
