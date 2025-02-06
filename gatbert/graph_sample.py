@@ -190,7 +190,10 @@ class GraphSample:
             iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
             iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
             edge_indices = sorted(iter_edge)
-            edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
+            if edge_indices:
+                edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
+            else:
+                edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
 
 
             return {
