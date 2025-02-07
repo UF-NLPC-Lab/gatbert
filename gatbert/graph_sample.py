@@ -12,6 +12,7 @@ from transformers import PreTrainedTokenizerFast
 from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID, MAX_KB_NODES
 from .sample import Sample, PretokenizedSample
 
+PoolIndices = Dict[int, List[int]]
 
 @dataclasses.dataclass
 class Edge:
@@ -45,6 +46,67 @@ class ArrayDict:
             self.index[k] = len(self.data)
             self.data.append(k)
         return self.index[k]
+
+def build_average_pool_mask(pool_inds: PoolIndices) -> Tuple[List[Tuple[int, int]], List[int]]:
+    """
+    Based on the subword->node pooling indices,
+    build a sparse mask matrix that will average the subwords' values
+    for a given node.
+
+    Args:
+        pool_inds: Mapping from node IDs to subword IDs.
+    Returns:
+        A tuple containing the indices and values of a sparse matrix representing the mask.
+        Indices are sorted.
+    """
+    mask_indices = []
+    mask_values = []
+    for (new_node_ind, subword_inds) in pool_inds.items():
+        mask_indices.extend((new_node_ind, subword_ind) for subword_ind in subword_inds)
+        v = 1 / len(subword_inds)
+        mask_values.extend(v for _ in subword_inds)
+    return mask_indices, mask_values
+
+def encode_kb_nodes(tokenizer: PreTrainedTokenizerFast, kb: List[str], max_nodes = MAX_KB_NODES) -> Tuple[torch.Tensor, PoolIndices]:
+    """
+    Encodes knowledge-base nodes using tokenization. The pooling indices returned indicate which subword IDs contributed to which node
+    """
+    # FIXME: This is assuming all the KB tokens are conceptnet URIs
+    clean_kb = [uri.split('/')[3] for uri in kb]
+    clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
+    tokenized_kb = tokenizer(text=clean_kb,
+                             is_split_into_words=True,
+                             return_offsets_mapping=True,
+                             return_special_tokens_mask=True,
+                             return_tensors='pt')
+    # Exclude the CLS and SEP tokens
+    # FIXME: Works fine for BERT, might not work for Roberta and others
+    real_inds = torch.where(~tokenized_kb['special_tokens_mask'].bool())
+    tokenized_kb = {
+        'input_ids': torch.unsqueeze(tokenized_kb['input_ids'][real_inds], dim=0),
+        'offset_mapping': torch.unsqueeze(tokenized_kb['offset_mapping'][real_inds], dim=0)
+    }
+    # new_node_index -> [subword_indices]
+    pool_inds = OrderedDict()
+
+    new_nodes_index = -1
+    # For KB subwords, we plan to pool each into one combined node
+    n_kb_nodes = 0
+    for (subword_index, (start, end)) in enumerate(tokenized_kb['offset_mapping'].squeeze()):
+        if start == 0:
+            assert end != 0, "Special tokens should have been scrubbed"
+            if n_kb_nodes >= max_nodes:
+                GraphSample.LOGGER.debug("Discarded %s/%s of external nodes", len(kb) - n_kb_nodes, len(kb))
+                break
+            n_kb_nodes += 1
+            new_nodes_index += 1
+            pool_inds[new_nodes_index] = []
+        pool_inds[new_nodes_index].append(subword_index)
+    else:
+        # Needs to be 1 greater than the last subword we included
+        subword_index += 1
+    tokenized_kb['input_ids'] = tokenized_kb['input_ids'][..., :subword_index]
+    return tokenized_kb['input_ids'], pool_inds
 
 class GraphSample:
 
@@ -136,50 +198,16 @@ class GraphSample:
             self.__tokenizer = tokenizer
 
         def encode(self, sample: GraphSample):
-            tokenizer = self.__tokenizer
-            # FIXME: This is assuming all the KB tokens are conceptnet URIs
-            clean_kb = [uri.split('/')[3] for uri in sample.kb]
-            clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
-            tokenized_kb = tokenizer(text=clean_kb,
-                                     is_split_into_words=True,
-                                     return_offsets_mapping=True,
-                                     return_special_tokens_mask=True,
-                                     return_tensors='pt')
-            device = tokenized_kb['input_ids'].device
-            # Exclude the CLS and SEP tokens
-            # FIXME: Works fine for BERT, might not work for Roberta and others
-            real_inds = torch.where(~tokenized_kb['special_tokens_mask'].bool())
-            tokenized_kb = {
-                'input_ids': torch.unsqueeze(tokenized_kb['input_ids'][real_inds], dim=0),
-                'offset_mapping': torch.unsqueeze(tokenized_kb['offset_mapping'][real_inds], dim=0)
-            }
-            # new_node_index -> [subword_indices]
-            pool_inds = OrderedDict()
+            input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
+            mask_indices, mask_values = build_average_pool_mask(pool_inds)
 
-            new_nodes_index = -1
-            # For KB subwords, we plan to pool each into one combined node
-            n_kb_nodes = 0
-            for (subword_index, (start, end)) in enumerate(tokenized_kb['offset_mapping'].squeeze()):
-                if start == 0:
-                    assert end != 0, "Special tokens should have been scrubbed"
-                    if n_kb_nodes >= MAX_KB_NODES:
-                        GraphSample.LOGGER.debug("Discarded %s/%s of external nodes", len(sample.kb) - n_kb_nodes, len(sample.kb))
-                        break
-                    n_kb_nodes += 1
-                    new_nodes_index += 1
-                    pool_inds[new_nodes_index] = []
-                pool_inds[new_nodes_index].append(subword_index)
-            else:
-                # Needs to be 1 greater than the last subword we included
-                subword_index += 1
-            tokenized_kb['input_ids'] = tokenized_kb['input_ids'][..., :subword_index]
+            mask_indices = [(0, *index) for index in mask_indices] # Prepend batch dim
 
-
-            mask_indices, mask_values = GraphSample.build_node_mask(pool_inds)
+            device = input_ids.device
             node_mask = torch.sparse_coo_tensor(
                 indices=torch.tensor(mask_indices, device=device).transpose(1, 0),
                 values=torch.tensor(mask_values, device=device),
-                size=(1, new_nodes_index + 1, tokenized_kb['input_ids'].shape[-1]),
+                size=(1, len(sample.kb), input_ids.shape[-1]),
                 is_coalesced=True,
                 requires_grad=False,
                 dtype=torch.float,
@@ -197,21 +225,11 @@ class GraphSample:
 
 
             return {
-                "input_ids" : tokenized_kb['input_ids'],
+                "input_ids" : input_ids,
                 "pooling_mask" : node_mask,
                 "edge_indices": edge_indices,
                 "stance": torch.tensor(sample.stance.value, device=device)
             }
-
-    @staticmethod
-    def build_node_mask(pool_inds):
-        mask_indices = []
-        mask_values = []
-        for (new_node_ind, subword_inds) in pool_inds.items():
-            mask_indices.extend((0, new_node_ind, subword_ind) for subword_ind in subword_inds)
-            v = 1 / len(subword_inds)
-            mask_values.extend(v for _ in subword_inds)
-        return mask_indices, mask_values
 
     class Encoder:
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
@@ -253,7 +271,9 @@ class GraphSample:
             kb_mask = kb_encoding['pooling_mask']
             kb_mask_inds, kb_mask_values = (kb_mask.indices(), kb_mask.values())
             kb_mask_inds[ [1, 2] ] += num_text_subwords
-            text_mask_inds, text_mask_values = GraphSample.build_node_mask({i:[i] for i in range(tokenized_text['input_ids'].shape[-1])})
+            text_mask_inds, text_mask_values = build_average_pool_mask({i:[i] for i in range(tokenized_text['input_ids'].shape[-1])})
+            text_mask_inds = [(0, *index) for index in text_mask_inds]
+
             text_mask_inds = torch.tensor(text_mask_inds, device=device).transpose(1, 0)
             text_mask_values = torch.tensor(text_mask_values)
             total_pooled_nodes = tokenized_text['input_ids'].shape[-1] + kb_mask.shape[-2]
