@@ -286,14 +286,15 @@ class GraphSample:
             new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_subwords), range(num_text_subwords)))
             # The KB edges, with indices adjusted
             orig_text_nodes = len(sample.target) + len(sample.context)
+            max_node_index = orig_text_nodes + kb_mask.shape[-2]
             for e in sample.edges:
-                if e.head_node_index >= orig_text_nodes: 
+                if orig_text_nodes <= e.head_node_index < max_node_index:
                     head_list = [num_text_subwords + (e.head_node_index - orig_text_nodes)]
                 elif e.head_node_index in expand_list:
                     head_list = expand_list[e.head_node_index]
                 else:
                     continue
-                if e.tail_node_index >= orig_text_nodes:
+                if orig_text_nodes <= e.tail_node_index < max_node_index:
                     tail_list = [num_text_subwords + (e.tail_node_index - orig_text_nodes)]
                 elif e.tail_node_index in expand_list:
                     tail_list = expand_list[e.tail_node_index]
