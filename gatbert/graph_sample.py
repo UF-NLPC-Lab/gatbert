@@ -47,6 +47,11 @@ class ArrayDict:
             self.data.append(k)
         return self.index[k]
 
+def build_identity_pool_mask(n: int):
+    indices = [(i, i) for i in range(n)]
+    values = [1 for _ in indices]
+    return indices, values
+
 def build_average_pool_mask(pool_inds: PoolIndices) -> Tuple[List[Tuple[int, int]], List[int]]:
     """
     Based on the subword->node pooling indices,
@@ -234,7 +239,6 @@ class GraphSample:
     class Encoder:
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.__tokenizer = tokenizer
-            self.__kb_encoder = GraphSample.KBEncoder(tokenizer)
 
         def encode(self, sample: GraphSample):
             tokenizer = self.__tokenizer
@@ -247,39 +251,42 @@ class GraphSample:
                                        truncation='longest_first')
             device = tokenized_text['input_ids'].device
 
-            kb_encoding = self.__kb_encoder.encode(sample)
-            num_text_subwords = tokenized_text['input_ids'].shape[-1]
+            kb_input_ids, kb_pool_inds = encode_kb_nodes(tokenizer, sample.kb)
+            num_kb_nodes = max(kb_pool_inds) + 1 if kb_pool_inds else 0
+
+            num_text_nodes = tokenized_text['input_ids'].shape[-1]
+            num_text_subwords = num_text_nodes
 
             # Combine input ids
-            concat_ids = torch.concatenate([tokenized_text['input_ids'], kb_encoding['input_ids']], dim=-1)
+            concat_ids = torch.concatenate([tokenized_text['input_ids'], kb_input_ids], dim=-1)
             # Add dummy position ids for graph nodes
             position_ids = torch.tensor(
                 [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
-                [0 for _ in range(kb_encoding['input_ids'].shape[-1])],
+                [0 for _ in range(kb_input_ids.shape[-1])],
                 device=device
             )
             # Add dummy token_type ids for graph nodes
             last_token_type_id = tokenized_text['token_type_ids'][..., -1][0]
             token_type_ids = torch.concatenate([
                 tokenized_text['token_type_ids'],
-                torch.full_like(kb_encoding['input_ids'], last_token_type_id)
+                torch.full_like(kb_input_ids, last_token_type_id)
                 ],
                 dim=-1
             )
 
-            # Make combined pooling mask for text and graph nodes
-            kb_mask = kb_encoding['pooling_mask']
-            kb_mask_inds, kb_mask_values = (kb_mask.indices(), kb_mask.values())
-            kb_mask_inds[ [1, 2] ] += num_text_subwords
-            text_mask_inds, text_mask_values = build_average_pool_mask({i:[i] for i in range(tokenized_text['input_ids'].shape[-1])})
-            text_mask_inds = [(0, *index) for index in text_mask_inds]
+            text_mask_inds, text_mask_values = build_identity_pool_mask(num_text_nodes)
+            kb_mask_inds, kb_mask_values = build_average_pool_mask(kb_pool_inds)
+            kb_mask_inds = [(i + num_text_nodes, j + num_text_subwords) for (i, j) in kb_mask_inds]
 
-            text_mask_inds = torch.tensor(text_mask_inds, device=device).transpose(1, 0)
-            text_mask_values = torch.tensor(text_mask_values)
-            total_pooled_nodes = tokenized_text['input_ids'].shape[-1] + kb_mask.shape[-2]
-            node_mask = torch.sparse_coo_tensor(
-                indices=torch.concatenate([text_mask_inds, kb_mask_inds], dim=-1),
-                values=torch.concatenate([text_mask_values, kb_mask_values], dim=-1),
+            mask_inds = text_mask_inds + kb_mask_inds
+            mask_inds = [(0, *inds) for inds in mask_inds]
+            
+            mask_inds = torch.tensor(mask_inds, device=device).transpose(1, 0)
+            mask_vals = torch.tensor(text_mask_values + kb_mask_values, device=device)
+            total_pooled_nodes = num_text_nodes + num_kb_nodes
+            node_mask =torch.sparse_coo_tensor(
+                indices=mask_inds,
+                values=mask_vals,
                 size=(1, total_pooled_nodes, concat_ids.shape[-1]),
                 is_coalesced=True,
                 requires_grad=True,
@@ -306,7 +313,7 @@ class GraphSample:
             new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_subwords), range(num_text_subwords)))
             # The KB edges, with indices adjusted
             orig_text_nodes = len(sample.target) + len(sample.context)
-            max_node_index = orig_text_nodes + kb_mask.shape[-2]
+            max_node_index = orig_text_nodes + num_kb_nodes
             for e in sample.edges:
                 if orig_text_nodes <= e.head_node_index < max_node_index:
                     head_list = [num_text_subwords + (e.head_node_index - orig_text_nodes)]
