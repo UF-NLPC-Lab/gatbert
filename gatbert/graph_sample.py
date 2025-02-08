@@ -11,6 +11,7 @@ from transformers import PreTrainedTokenizerFast
 # Local
 from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID, MAX_KB_NODES
 from .sample import Sample, PretokenizedSample
+from .types import TensorDict
 
 PoolIndices = Dict[int, List[int]]
 
@@ -113,6 +114,62 @@ def encode_kb_nodes(tokenizer: PreTrainedTokenizerFast, kb: List[str], max_nodes
     tokenized_kb['input_ids'] = tokenized_kb['input_ids'][..., :subword_index]
     return tokenized_kb['input_ids'], pool_inds
 
+
+def collate_ids(tokenizer: PreTrainedTokenizerFast,
+                samples: List[TensorDict],
+                return_attention_mask: bool = False) -> TensorDict:
+    token_padding = tokenizer.pad_token_id
+    rdict = {}
+    rdict['input_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['input_ids'], 0) for s in samples],
+                                                    batch_first=True, padding_value=token_padding)
+    if return_attention_mask:
+        rdict['attention_mask'] = rdict['input_ids'] != token_padding
+
+    if 'position_ids' in samples[0]:
+        # FIXME: Need a custom pad value for this?
+        rdict['position_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['position_ids'], 0) for s in samples],
+                                                       batch_first=True)
+    if 'token_type_ids' in samples[0]:
+        rdict['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['token_type_ids'], 0) for s in samples],
+                                                       batch_first=True, padding_value=tokenizer.pad_token_type_id)
+    return rdict
+
+def collate_graph_data(samples: List[TensorDict]) -> TensorDict:
+    max_nodes = -1
+    max_subwords = -1
+
+    new_edge_indices = []
+    new_pool_indices = []
+    new_pool_values = []
+    for (i, s) in enumerate(samples):
+        # edge indices
+        edge_indices = s['edge_indices']
+        edge_indices[0, :] = i
+        new_edge_indices.append(edge_indices)
+
+        # node mask
+        pooling_mask = s['pooling_mask']
+        (_, num_nodes, num_subwords) = pooling_mask.shape
+        max_nodes    = max(max_nodes, num_nodes)
+        max_subwords = max(max_subwords, num_subwords)
+        indices = pooling_mask.indices()
+        indices[0, :] = i
+        new_pool_indices.append(indices)
+        new_pool_values.append(pooling_mask.values())
+    new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
+    batch_node_mask = torch.sparse_coo_tensor(
+        indices=torch.concatenate(new_pool_indices, dim=-1),
+        values=torch.concatenate(new_pool_values, dim=-1),
+        size=(len(samples), max_nodes, max_subwords),
+        device=pooling_mask.device,
+        is_coalesced=True,
+        requires_grad=True
+    )
+    return {
+        'pooling_mask': batch_node_mask,
+        'edge_indices': new_edge_indices
+    }
+
 class GraphSample:
 
     LOGGER = logging.getLogger("GraphSample")
@@ -198,11 +255,13 @@ class GraphSample:
                                edges=list(self.edges)
             )
 
-    class KBEncoder:
+    class ConcatEncoder:
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.__tokenizer = tokenizer
+            self.__text_encoder = PretokenizedSample.Encoder(tokenizer)
 
         def encode(self, sample: GraphSample):
+
             input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
             mask_indices, mask_values = build_average_pool_mask(pool_inds)
 
@@ -229,12 +288,29 @@ class GraphSample:
                 edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
 
 
+            encoded_text = self.__text_encoder.encode(sample.to_sample())
+            stance = encoded_text.pop('stance')
             return {
-                "input_ids" : input_ids,
-                "pooling_mask" : node_mask,
-                "edge_indices": edge_indices,
-                "stance": torch.tensor(sample.stance.value, device=device)
+                "text": encoded_text,
+                "graph": {
+                    "input_ids" : input_ids,
+                    "pooling_mask" : node_mask,
+                    "edge_indices": edge_indices
+                },
+                'stance': stance
             }
+
+        def collate(self, samples: List[Dict[str, TensorDict]]) -> TensorDict:
+            rdict = {}
+            rdict["stance"] = torch.stack([s['stance'] for s in samples])
+
+            graph_samples = [s['graph'] for s in samples]
+            rdict['graph'] = {
+                **collate_ids(graph_samples),
+                **collate_graph_data(graph_samples)
+            }
+            rdict['text'] = collate_ids([s['text'] for s in samples])
+            return rdict
 
     class Encoder:
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
@@ -284,7 +360,7 @@ class GraphSample:
             mask_inds = torch.tensor(mask_inds, device=device).transpose(1, 0)
             mask_vals = torch.tensor(text_mask_values + kb_mask_values, device=device)
             total_pooled_nodes = num_text_nodes + num_kb_nodes
-            node_mask =torch.sparse_coo_tensor(
+            node_mask = torch.sparse_coo_tensor(
                 indices=mask_inds,
                 values=mask_vals,
                 size=(1, total_pooled_nodes, concat_ids.shape[-1]),
@@ -341,54 +417,11 @@ class GraphSample:
             }
 
         def collate(self, samples: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-            tokenizer = self.__tokenizer
-            max_nodes = -1
-            max_subwords = -1
-            new_edge_indices = []
-            new_pool_indices = []
-            new_pool_values = []
-
-            for (i, s) in enumerate(samples):
-                # edge indices
-                edge_indices = s['edge_indices']
-                edge_indices[0, :] = i
-                new_edge_indices.append(edge_indices)
-
-                # node mask
-                pooling_mask = s['pooling_mask']
-                (_, num_nodes, num_subwords) = pooling_mask.shape
-                max_nodes    = max(max_nodes, num_nodes)
-                max_subwords = max(max_subwords, num_subwords)
-                indices = pooling_mask.indices()
-                indices[0, :] = i
-                new_pool_indices.append(indices)
-                new_pool_values.append(pooling_mask.values())
-
-            new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
-            batch_node_mask = torch.sparse_coo_tensor(
-                indices=torch.concatenate(new_pool_indices, dim=-1),
-                values=torch.concatenate(new_pool_values, dim=-1),
-                size=(len(samples), max_nodes, max_subwords),
-                device=pooling_mask.device,
-                is_coalesced=True,
-                requires_grad=True
-            )
-            new_input_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['input_ids'], 0) for s in samples],
-                                                            batch_first=True, padding_value=tokenizer.pad_token_id)
-            # FIXME: Need a custom pad value for this?
-            new_position_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['position_ids'], 0) for s in samples],
-                                                               batch_first=True)
-            new_token_type_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['token_type_ids'], 0) for s in samples],
-                                                               batch_first=True, padding_value=tokenizer.pad_token_type_id)
             return {
-                'input_ids': new_input_ids,
-                'position_ids': new_position_ids,
-                'token_type_ids': new_token_type_ids,
-                'pooling_mask': batch_node_mask,
-                'edge_indices': new_edge_indices,
-                "stance": torch.stack([s['stance'] for s in samples])
+                "stance": torch.stack([s['stance'] for s in samples]),
+                **collate_ids(self.__tokenizer, samples),
+                **collate_graph_data(samples)
             }
-
 
     def __init__(self,
                  stance: Stance,
