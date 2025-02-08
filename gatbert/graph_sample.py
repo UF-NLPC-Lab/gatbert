@@ -134,10 +134,11 @@ def collate_ids(tokenizer: PreTrainedTokenizerFast,
                                                        batch_first=True, padding_value=tokenizer.pad_token_type_id)
     return rdict
 
-def collate_graph_data(samples: List[TensorDict]) -> TensorDict:
-    max_nodes = -1
+def collate_graph_data(samples: List[TensorDict],
+                       return_node_counts: bool = False) -> TensorDict:
     max_subwords = -1
 
+    node_counts = []
     new_edge_indices = []
     new_pool_indices = []
     new_pool_values = []
@@ -150,7 +151,7 @@ def collate_graph_data(samples: List[TensorDict]) -> TensorDict:
         # node mask
         pooling_mask = s['pooling_mask']
         (_, num_nodes, num_subwords) = pooling_mask.shape
-        max_nodes    = max(max_nodes, num_nodes)
+        node_counts.append(num_nodes)
         max_subwords = max(max_subwords, num_subwords)
         indices = pooling_mask.indices()
         indices[0, :] = i
@@ -160,15 +161,18 @@ def collate_graph_data(samples: List[TensorDict]) -> TensorDict:
     batch_node_mask = torch.sparse_coo_tensor(
         indices=torch.concatenate(new_pool_indices, dim=-1),
         values=torch.concatenate(new_pool_values, dim=-1),
-        size=(len(samples), max_nodes, max_subwords),
+        size=(len(samples), max(node_counts), max_subwords),
         device=pooling_mask.device,
         is_coalesced=True,
         requires_grad=True
     )
-    return {
+    rdict = {
         'pooling_mask': batch_node_mask,
         'edge_indices': new_edge_indices
     }
+    if return_node_counts:
+        rdict['node_counts'] = torch.tensor(node_counts, device=pooling_mask.device)
+    return rdict
 
 class GraphSample:
 
@@ -273,12 +277,13 @@ class GraphSample:
                 values=torch.tensor(mask_values, device=device),
                 size=(1, len(sample.kb), input_ids.shape[-1]),
                 is_coalesced=True,
-                requires_grad=False,
+                requires_grad=True,
                 dtype=torch.float,
                 device=device
             )
 
             orig_text_nodes = len(sample.target) + len(sample.context)
+            # Only keep edges between two graph concepts
             iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
             iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
             edge_indices = sorted(iter_edge)
@@ -306,10 +311,10 @@ class GraphSample:
 
             graph_samples = [s['graph'] for s in samples]
             rdict['graph'] = {
-                **collate_ids(graph_samples),
-                **collate_graph_data(graph_samples)
+                **collate_ids(self.__tokenizer, graph_samples),
+                **collate_graph_data(graph_samples, return_node_counts=True)
             }
-            rdict['text'] = collate_ids([s['text'] for s in samples])
+            rdict['text'] = collate_ids(self.__tokenizer, [s['text'] for s in samples], return_attention_mask=True)
             return rdict
 
     class Encoder:
