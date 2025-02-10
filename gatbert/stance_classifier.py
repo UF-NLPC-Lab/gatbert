@@ -4,11 +4,12 @@ from transformers import AutoModel, BertModel, AutoConfig
 # Local
 from .gatbert import GatbertModel, GatbertLayer, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance
+from .config import GatbertConfig
 
 class GraphClassifier(torch.nn.Module):
-    def __init__(self, config, n_relations):
+    def __init__(self, config: GatbertConfig):
         super().__init__()
-        self.bert = GatbertModel(config, n_relations=n_relations)
+        self.bert = GatbertModel(config)
         self.projection = torch.nn.Linear(
             config.hidden_size,
             out_features=len(Stance),
@@ -22,20 +23,20 @@ class GraphClassifier(torch.nn.Module):
 class ConcatClassifier(torch.nn.Module):
     def __init__(self,
                  pretrained_model_name: str,
-                 n_relations: int,
-                 n_gat_layers: int = 2):
+                 config: GatbertConfig):
+        """
+        Args:
+            pretrained_model_name: model to load for text portion of the model
+            config: config for the graph portion of the model
+        """
         super().__init__()
-        config = AutoConfig.from_pretrained(pretrained_model_name)
-        config.num_hidden_layers = n_gat_layers
-        config.n_relations = n_relations
 
         self.bert = BertModel.from_pretrained(pretrained_model_name)
-
         self.concept_embeddings = GatbertEmbeddings(config)
         self.concept_embeddings.load_pretrained_weights(self.bert.embeddings)
         self.gat = GatbertEncoder(config)
 
-        self.linear = torch.nn.Linear(2 * config.hidden_size, len(Stance), bias=False)
+        self.linear = torch.nn.Linear(config.hidden_size + self.bert.config.hidden_size, len(Stance), bias=False)
     
     def forward(self, text, graph):
         # Text Calculation

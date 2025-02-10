@@ -6,6 +6,8 @@ from transformers import AutoConfig, AutoModel
 from .f1_calc import F1Calc
 from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS
 from .stance_classifier import GraphClassifier, BertClassifier, ConcatClassifier
+from .config import GatbertConfig
+from .types import AttentionType
 
 class StanceModule(L.LightningModule):
     def __init__(self):
@@ -54,12 +56,13 @@ class StanceModule(L.LightningModule):
 class GraphStanceModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
-                 load_pretrained_weights: bool = True):
+                 load_pretrained_weights: bool = True,
+                 att_type: AttentionType = 'edge_as_att'):
         super().__init__()
         self.save_hyperparameters()
 
-        model_config = AutoConfig.from_pretrained(self.hparams.pretrained_model)
-        self.__classifier = GraphClassifier(model_config, NUM_CN_RELATIONS)
+        model_config = GatbertConfig(AutoConfig.from_pretrained(self.hparams.pretrained_model), n_relations=NUM_CN_RELATIONS, att_type=self.hparams.att_type)
+        self.__classifier = GraphClassifier(model_config)
         if self.hparams.load_pretrained_weights:
             orig_model = AutoModel.from_pretrained(self.hparams.pretrained_model)
             self.__classifier.bert.load_pretrained_weights(orig_model)
@@ -68,10 +71,16 @@ class GraphStanceModule(StanceModule):
         return self.__classifier(*args, **kwargs)
 
 class ConcatStanceModule(StanceModule):
-    def __init__(self, pretrained_model: str = DEFAULT_MODEL):
+    def __init__(self,
+                 pretrained_model: str = DEFAULT_MODEL,
+                 att_type: AttentionType = 'edge_as_att'):
         super().__init__()
         self.save_hyperparameters()
-        self.__classifier = ConcatClassifier(pretrained_model, NUM_CN_RELATIONS)
+        model_config = GatbertConfig(AutoConfig.from_pretrained(self.hparams.pretrained_model),
+                                    n_relations=NUM_CN_RELATIONS,
+                                    att_type=self.hparams.att_type)
+        model_config.num_hidden_layers = 2 # TODO: Make configurable once it matters
+        self.__classifier = ConcatClassifier(pretrained_model, model_config)
     def forward(self, *args, **kwargs):
         return self.__classifier(*args, **kwargs)
     
