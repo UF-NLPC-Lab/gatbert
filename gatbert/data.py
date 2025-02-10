@@ -78,8 +78,13 @@ class Preprocessor:
         if corpus_type == 'graph':
             parse_fn = parse_graph_tsv
             if sample_type == 'token':
-                parse_fn = map_func_gen(lambda gs: self.__encode_pretokenized(gs.to_sample()), parse_fn)
-                collate_fn = self.__simple_collate
+                encoder = PretokenizedSample.Encoder(self.tokenizer)
+                parse_fn = map_func_gen(lambda gs: encoder.encode(gs.to_sample()), parse_fn)
+                collate_fn = encoder.collate
+            elif sample_type == 'concat':
+                encoder = GraphSample.ConcatEncoder(self.tokenizer)
+                parse_fn = map_func_gen(encoder.encode, parse_fn)
+                collate_fn = encoder.collate
             elif sample_type in {'graph', 'stripped_graph'}:
                 if sample_type == 'stripped_graph':
                     parse_fn = map_func_gen(GraphSample.strip_external, parse_fn)
@@ -98,8 +103,9 @@ class Preprocessor:
                 parse_fn = parse_vast
             else:
                 raise ValueError(f"Invalid corpus_type {corpus_type}")
-            parse_fn = map_func_gen(self.__encode_sample, parse_fn)
-            collate_fn = self.__simple_collate
+            encoder = Sample.Encoder(self.tokenizer)
+            parse_fn = map_func_gen(encoder.encode, parse_fn)
+            collate_fn = encoder.collate
 
         self.__parse_fn = parse_fn
         self.__collate_fn = collate_fn

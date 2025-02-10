@@ -11,7 +11,9 @@ from transformers import PreTrainedTokenizerFast
 # Local
 from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID, MAX_KB_NODES
 from .sample import Sample, PretokenizedSample
+from .types import TensorDict
 
+PoolIndices = Dict[int, List[int]]
 
 @dataclasses.dataclass
 class Edge:
@@ -45,6 +47,132 @@ class ArrayDict:
             self.index[k] = len(self.data)
             self.data.append(k)
         return self.index[k]
+
+def build_identity_pool_mask(n: int):
+    indices = [(i, i) for i in range(n)]
+    values = [1 for _ in indices]
+    return indices, values
+
+def build_average_pool_mask(pool_inds: PoolIndices) -> Tuple[List[Tuple[int, int]], List[int]]:
+    """
+    Based on the subword->node pooling indices,
+    build a sparse mask matrix that will average the subwords' values
+    for a given node.
+
+    Args:
+        pool_inds: Mapping from node IDs to subword IDs.
+    Returns:
+        A tuple containing the indices and values of a sparse matrix representing the mask.
+        Indices are sorted.
+    """
+    mask_indices = []
+    mask_values = []
+    for (new_node_ind, subword_inds) in pool_inds.items():
+        mask_indices.extend((new_node_ind, subword_ind) for subword_ind in subword_inds)
+        v = 1 / len(subword_inds)
+        mask_values.extend(v for _ in subword_inds)
+    return mask_indices, mask_values
+
+def encode_kb_nodes(tokenizer: PreTrainedTokenizerFast, kb: List[str], max_nodes = MAX_KB_NODES) -> Tuple[torch.Tensor, PoolIndices]:
+    """
+    Encodes knowledge-base nodes using tokenization. The pooling indices returned indicate which subword IDs contributed to which node
+    """
+    # FIXME: This is assuming all the KB tokens are conceptnet URIs
+    clean_kb = [uri.split('/')[3] for uri in kb]
+    clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
+    tokenized_kb = tokenizer(text=clean_kb,
+                             is_split_into_words=True,
+                             return_offsets_mapping=True,
+                             return_special_tokens_mask=True,
+                             return_tensors='pt')
+    # Exclude the CLS and SEP tokens
+    # FIXME: Works fine for BERT, might not work for Roberta and others
+    real_inds = torch.where(~tokenized_kb['special_tokens_mask'].bool())
+    tokenized_kb = {
+        'input_ids': torch.unsqueeze(tokenized_kb['input_ids'][real_inds], dim=0),
+        'offset_mapping': torch.unsqueeze(tokenized_kb['offset_mapping'][real_inds], dim=0)
+    }
+    # new_node_index -> [subword_indices]
+    pool_inds = OrderedDict()
+
+    new_nodes_index = -1
+    # For KB subwords, we plan to pool each into one combined node
+    n_kb_nodes = 0
+    for (subword_index, (start, end)) in enumerate(tokenized_kb['offset_mapping'].squeeze()):
+        if start == 0:
+            assert end != 0, "Special tokens should have been scrubbed"
+            if n_kb_nodes >= max_nodes:
+                GraphSample.LOGGER.debug("Discarded %s/%s of external nodes", len(kb) - n_kb_nodes, len(kb))
+                break
+            n_kb_nodes += 1
+            new_nodes_index += 1
+            pool_inds[new_nodes_index] = []
+        pool_inds[new_nodes_index].append(subword_index)
+    else:
+        # Needs to be 1 greater than the last subword we included
+        subword_index += 1
+    tokenized_kb['input_ids'] = tokenized_kb['input_ids'][..., :subword_index]
+    return tokenized_kb['input_ids'], pool_inds
+
+
+def collate_ids(tokenizer: PreTrainedTokenizerFast,
+                samples: List[TensorDict],
+                return_attention_mask: bool = False) -> TensorDict:
+    token_padding = tokenizer.pad_token_id
+    rdict = {}
+    rdict['input_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['input_ids'], 0) for s in samples],
+                                                    batch_first=True, padding_value=token_padding)
+    if return_attention_mask:
+        rdict['attention_mask'] = rdict['input_ids'] != token_padding
+
+    if 'position_ids' in samples[0]:
+        # FIXME: Need a custom pad value for this?
+        rdict['position_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['position_ids'], 0) for s in samples],
+                                                       batch_first=True)
+    if 'token_type_ids' in samples[0]:
+        rdict['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['token_type_ids'], 0) for s in samples],
+                                                       batch_first=True, padding_value=tokenizer.pad_token_type_id)
+    return rdict
+
+def collate_graph_data(samples: List[TensorDict],
+                       return_node_counts: bool = False) -> TensorDict:
+    max_subwords = -1
+
+    node_counts = []
+    new_edge_indices = []
+    new_pool_indices = []
+    new_pool_values = []
+    for (i, s) in enumerate(samples):
+        # edge indices
+        edge_indices = s['edge_indices']
+        edge_indices[0, :] = i
+        new_edge_indices.append(edge_indices)
+
+        # node mask
+        pooling_mask = s['pooling_mask']
+        (_, num_nodes, num_subwords) = pooling_mask.shape
+        node_counts.append(num_nodes)
+        max_subwords = max(max_subwords, num_subwords)
+        indices = pooling_mask.indices()
+        indices[0, :] = i
+        new_pool_indices.append(indices)
+        new_pool_values.append(pooling_mask.values())
+    new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
+    batch_node_mask = torch.sparse_coo_tensor(
+        indices=torch.concatenate(new_pool_indices, dim=-1),
+        values=torch.concatenate(new_pool_values, dim=-1),
+        size=(len(samples), max(node_counts), max_subwords),
+        device=pooling_mask.device,
+        is_coalesced=True,
+        requires_grad=True
+    )
+    rdict = {
+        'pooling_mask': batch_node_mask,
+        'edge_indices': new_edge_indices
+    }
+    if return_node_counts:
+        rdict['node_counts'] = torch.tensor(node_counts, device=pooling_mask.device)
+    return rdict
 
 class GraphSample:
 
@@ -131,15 +259,70 @@ class GraphSample:
                                edges=list(self.edges)
             )
 
+    class ConcatEncoder:
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer
+            self.__text_encoder = PretokenizedSample.Encoder(tokenizer)
+
+        def encode(self, sample: GraphSample):
+
+            input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
+            mask_indices, mask_values = build_average_pool_mask(pool_inds)
+
+            mask_indices = [(0, *index) for index in mask_indices] # Prepend batch dim
+
+            device = input_ids.device
+            node_mask = torch.sparse_coo_tensor(
+                indices=torch.tensor(mask_indices, device=device).transpose(1, 0),
+                values=torch.tensor(mask_values, device=device),
+                size=(1, len(sample.kb), input_ids.shape[-1]),
+                is_coalesced=True,
+                requires_grad=True,
+                dtype=torch.float,
+                device=device
+            )
+
+            orig_text_nodes = len(sample.target) + len(sample.context)
+            # Only keep edges between two graph concepts
+            iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
+            iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
+            edge_indices = sorted(iter_edge)
+            if edge_indices:
+                edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
+            else:
+                edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
+
+
+            encoded_text = self.__text_encoder.encode(sample.to_sample())
+            stance = encoded_text.pop('stance')
+            return {
+                "text": encoded_text,
+                "graph": {
+                    "input_ids" : input_ids,
+                    "pooling_mask" : node_mask,
+                    "edge_indices": edge_indices
+                },
+                'stance': stance
+            }
+
+        def collate(self, samples: List[Dict[str, TensorDict]]) -> TensorDict:
+            rdict = {}
+            rdict["stance"] = torch.stack([s['stance'] for s in samples])
+
+            graph_samples = [s['graph'] for s in samples]
+            rdict['graph'] = {
+                **collate_ids(self.__tokenizer, graph_samples),
+                **collate_graph_data(graph_samples, return_node_counts=True)
+            }
+            rdict['text'] = collate_ids(self.__tokenizer, [s['text'] for s in samples], return_attention_mask=True)
+            return rdict
+
     class Encoder:
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
-            self.__tokenizer = tokenizer    
+            self.__tokenizer = tokenizer
 
         def encode(self, sample: GraphSample):
             tokenizer = self.__tokenizer
-            # FIXME: This is assuming all the KB tokens are conceptnet URIs
-            clean_kb = [uri.split('/')[3] for uri in sample.kb]
-            clean_kb = [uri.replace("_", ' ') for uri in clean_kb]
 
             tokenized_text = tokenizer(text=sample.target,
                                        text_pair=sample.context,
@@ -147,188 +330,103 @@ class GraphSample:
                                        return_offsets_mapping=True,
                                        return_tensors='pt',
                                        truncation='longest_first')
-            tokenized_kb = tokenizer(text=clean_kb,
-                                     is_split_into_words=True,
-                                     return_offsets_mapping=True,
-                                     return_special_tokens_mask=True,
-                                     return_tensors='pt')
-            tokenized_text = {k:torch.squeeze(tokenized_text[k]) for k in ['input_ids', 'offset_mapping', 'token_type_ids']}
-            tokenized_kb = {k:torch.squeeze(tokenized_kb[k]) for k in ['input_ids', 'offset_mapping', 'special_tokens_mask']}
             device = tokenized_text['input_ids'].device
 
-            # Exclude the CLS and SEP tokens
-            # FIXME: Works fine for BERT, might not work for Roberta and others
-            real_inds = torch.where(~tokenized_kb['special_tokens_mask'].bool())
-            tokenized_kb = {
-                'input_ids': tokenized_kb['input_ids'][real_inds],
-                'offset_mapping': tokenized_kb['offset_mapping'][real_inds]
-            }
+            kb_input_ids, kb_pool_inds = encode_kb_nodes(tokenizer, sample.kb)
+            num_kb_nodes = max(kb_pool_inds) + 1 if kb_pool_inds else 0
 
+            num_text_nodes = tokenized_text['input_ids'].shape[-1]
+            num_text_subwords = num_text_nodes
+
+            # Combine input ids
+            concat_ids = torch.concatenate([tokenized_text['input_ids'], kb_input_ids], dim=-1)
+            # Add dummy position ids for graph nodes
             position_ids = torch.tensor(
                 [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
-                [0 for _ in range(tokenized_kb['input_ids'].shape[-1])],
+                [0 for _ in range(kb_input_ids.shape[-1])],
                 device=device
             )
-            last_token_type_id = tokenized_text['token_type_ids'][-1]
+            # Add dummy token_type ids for graph nodes
+            last_token_type_id = tokenized_text['token_type_ids'][..., -1][0]
             token_type_ids = torch.concatenate([
                 tokenized_text['token_type_ids'],
-                torch.full_like(tokenized_kb['input_ids'], last_token_type_id)
+                torch.full_like(kb_input_ids, last_token_type_id)
                 ],
                 dim=-1
             )
 
-            # old_node_index -> [new_node_indices]
-            expand_list = defaultdict(list)
-            # new_node_index -> [subword_indices]
-            pool_inds = OrderedDict()
+            text_mask_inds, text_mask_values = build_identity_pool_mask(num_text_nodes)
+            kb_mask_inds, kb_mask_values = build_average_pool_mask(kb_pool_inds)
+            kb_mask_inds = [(i + num_text_nodes, j + num_text_subwords) for (i, j) in kb_mask_inds]
 
-            new_nodes_index = -1
-            orig_nodes_index = -1
-
-            # For token subwords, we will split a token's nodes into subwords
-            token_offset_mapping = tokenized_text['offset_mapping'].squeeze()
-            # Handle splitting of token nodes into subword nodes
-            for (subword_index, (start, end)) in enumerate(token_offset_mapping):
-                new_nodes_index += 1
-                pool_inds[new_nodes_index] = []
-
-                if start != end: # Real character, not a special character
-                    if start == 0: # Start of a token
-                        orig_nodes_index += 1
-                    expand_list[orig_nodes_index].append(new_nodes_index)
-                pool_inds[new_nodes_index].append(subword_index)
-
-
-            # Need to fast-forward past the token nodes to the external ones
-            # Some of the token nodes may have been truncated by the tokenizer
-            orig_nodes_index = len(sample.target) + len(sample.context) - 1
-
-            # For KB subwords, we plan to pool each into one combined node
-            kb_offset_mapping = tokenized_kb['offset_mapping'].squeeze()
-            n_kb_nodes = 0
-            for (subword_index, (start, end)) in enumerate(kb_offset_mapping, start=subword_index + 1):
-                if start == 0:
-                    assert end != 0, "Special tokens should have been scrubbed"
-                    if n_kb_nodes >= MAX_KB_NODES:
-                        GraphSample.LOGGER.debug("Discarded %s/%s of external nodes", len(sample.kb) - n_kb_nodes, len(sample.kb))
-                        break
-                    n_kb_nodes += 1
-                    new_nodes_index += 1
-                    pool_inds[new_nodes_index] = []
-                    orig_nodes_index += 1
-                    expand_list[orig_nodes_index].append(new_nodes_index)
-                pool_inds[new_nodes_index].append(subword_index)
-            else:
-                # Needs to be 1 greater than the last subword we included
-                subword_index += 1
-
-            concat_ids = torch.concatenate([tokenized_text['input_ids'], tokenized_kb['input_ids']], dim=-1)
-            # The tokenizer already did truncation for tokens, but this is where we do truncation for external nodes
-            concat_ids = concat_ids[:subword_index]
-            position_ids = position_ids[:subword_index]
-            token_type_ids = token_type_ids[:subword_index]
-
-            num_new_nodes = new_nodes_index + 1
-
-            mask_indices = []
-            mask_values = []
-            for (new_node_ind, subword_inds) in pool_inds.items():
-                mask_indices.extend((0, new_node_ind, subword_ind) for subword_ind in subword_inds)
-                v = 1 / len(subword_inds)
-                mask_values.extend(v for _ in subword_inds)
-
-            mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
-            mask_values = torch.tensor(mask_values, device=device)
+            mask_inds = text_mask_inds + kb_mask_inds
+            mask_inds = [(0, *inds) for inds in mask_inds]
+            
+            mask_inds = torch.tensor(mask_inds, device=device).transpose(1, 0)
+            mask_vals = torch.tensor(text_mask_values + kb_mask_values, device=device)
+            total_pooled_nodes = num_text_nodes + num_kb_nodes
             node_mask = torch.sparse_coo_tensor(
-                indices=mask_indices,
-                values=mask_values,
-                size=(1, num_new_nodes, concat_ids.shape[-1]),
+                indices=mask_inds,
+                values=mask_vals,
+                size=(1, total_pooled_nodes, concat_ids.shape[-1]),
                 is_coalesced=True,
                 requires_grad=True,
                 dtype=torch.float,
                 device=device
             )
 
+            # old_node_index -> [new_node_indices]
+            expand_list = defaultdict(list)
+            # For token subwords, we will split a token's nodes into subwords
+            # Handle splitting of token nodes into subword nodes
+            orig_nodes_index = -1
+            for (new_nodes_index, (start, end)) in enumerate(tokenized_text['offset_mapping'].squeeze()):
+                if start != end: # Real character, not a special character
+                    if start == 0: # Start of a token
+                        orig_nodes_index += 1
+                    expand_list[orig_nodes_index].append(new_nodes_index)
+
+
             # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
             # Need a 0 at the beginning for batch
             new_edges = []
             # The original token-to-token edges of a standard BERT model
-            num_text_tokens = tokenized_text['input_ids'].shape[-1]
-            new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_tokens), range(num_text_tokens)))
-
-            # The edges that we read from the file.
-            # Update their head/tail indices to account for subwords and special tokens
-            discarded = 0
-            for edge in sample.edges:
-                if edge.head_node_index not in expand_list or edge.tail_node_index not in expand_list:
-                    discarded += 1
+            new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_subwords), range(num_text_subwords)))
+            # The KB edges, with indices adjusted
+            orig_text_nodes = len(sample.target) + len(sample.context)
+            max_node_index = orig_text_nodes + num_kb_nodes
+            for e in sample.edges:
+                if orig_text_nodes <= e.head_node_index < max_node_index:
+                    head_list = [num_text_subwords + (e.head_node_index - orig_text_nodes)]
+                elif e.head_node_index in expand_list:
+                    head_list = expand_list[e.head_node_index]
+                else:
                     continue
-
-                head_expansions = expand_list[edge.head_node_index]
-                tail_expansions = expand_list[edge.tail_node_index]
-                new_edges.extend((0, head, tail, edge.relation_id) for (head, tail) in product(head_expansions, tail_expansions))
+                if orig_text_nodes <= e.tail_node_index < max_node_index:
+                    tail_list = [num_text_subwords + (e.tail_node_index - orig_text_nodes)]
+                elif e.tail_node_index in expand_list:
+                    tail_list = expand_list[e.tail_node_index]
+                else:
+                    continue
+                new_edges.extend((0, head, tail, e.relation_id) for (head, tail) in product(head_list, tail_list))
             new_edges.sort()
-            GraphSample.LOGGER.debug("Discarded %s/%s edges.", discarded, len(sample.edges))
-
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
+
             return {
-                "input_ids" : torch.unsqueeze(concat_ids, 0),
-                "position_ids": torch.unsqueeze(position_ids, 0),
-                "token_type_ids": torch.unsqueeze(token_type_ids, 0),
+                "input_ids" : concat_ids,
+                "position_ids": position_ids,
+                "token_type_ids": token_type_ids,
                 "pooling_mask" : node_mask,
                 "edge_indices": new_edges,
                 "stance": torch.tensor(sample.stance.value, device=device)
             }
 
         def collate(self, samples: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-            tokenizer = self.__tokenizer
-            max_nodes = -1
-            max_subwords = -1
-            new_edge_indices = []
-            new_pool_indices = []
-            new_pool_values = []
-
-            for (i, s) in enumerate(samples):
-                # edge indices
-                edge_indices = s['edge_indices']
-                edge_indices[0, :] = i
-                new_edge_indices.append(edge_indices)
-
-                # node mask
-                pooling_mask = s['pooling_mask']
-                (_, num_nodes, num_subwords) = pooling_mask.shape
-                max_nodes    = max(max_nodes, num_nodes)
-                max_subwords = max(max_subwords, num_subwords)
-                indices = pooling_mask.indices()
-                indices[0, :] = i
-                new_pool_indices.append(indices)
-                new_pool_values.append(pooling_mask.values())
-
-            new_edge_indices = torch.concatenate(new_edge_indices, dim=-1)
-            batch_node_mask = torch.sparse_coo_tensor(
-                indices=torch.concatenate(new_pool_indices, dim=-1),
-                values=torch.concatenate(new_pool_values, dim=-1),
-                size=(len(samples), max_nodes, max_subwords),
-                device=pooling_mask.device,
-                is_coalesced=True,
-                requires_grad=True
-            )
-            new_input_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['input_ids'], 0) for s in samples],
-                                                            batch_first=True, padding_value=tokenizer.pad_token_id)
-            # FIXME: Need a custom pad value for this?
-            new_position_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['position_ids'], 0) for s in samples],
-                                                               batch_first=True)
-            new_token_type_ids = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['token_type_ids'], 0) for s in samples],
-                                                               batch_first=True, padding_value=tokenizer.pad_token_type_id)
             return {
-                'input_ids': new_input_ids,
-                'position_ids': new_position_ids,
-                'token_type_ids': new_token_type_ids,
-                'pooling_mask': batch_node_mask,
-                'edge_indices': new_edge_indices,
-                "stance": torch.stack([s['stance'] for s in samples])
+                "stance": torch.stack([s['stance'] for s in samples]),
+                **collate_ids(self.__tokenizer, samples),
+                **collate_graph_data(samples)
             }
-
 
     def __init__(self,
                  stance: Stance,

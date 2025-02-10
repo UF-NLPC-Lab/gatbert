@@ -5,6 +5,6 @@ import torch
 
 CorpusType = Literal['ezstance', 'semeval', 'vast', 'graph']
 
-SampleType = Literal['token', 'graph', 'stripped_graph']
+SampleType = Literal['token', 'graph', 'stripped_graph', 'concat']
 
 TensorDict = Dict[str, torch.Tensor]
