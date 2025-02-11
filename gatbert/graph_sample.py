@@ -96,6 +96,7 @@ def encode_kb_nodes(tokenizer: PreTrainedTokenizerFast, kb: List[str], max_nodes
     pool_inds = OrderedDict()
 
     new_nodes_index = -1
+    subword_index = -1 # Has to be at least defined in case we skip the loop
     # For KB subwords, we plan to pool each into one combined node
     n_kb_nodes = 0
     for (subword_index, (start, end)) in enumerate(tokenized_kb['offset_mapping'].squeeze()):
