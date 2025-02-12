@@ -12,7 +12,7 @@ from transformers.models.bert.modeling_bert import BertSelfAttention, \
     BertEmbeddings, \
     BertModel, BertConfig
 # Local
-from .self_attention import EdgeAsAttendeeSelfAttention
+from .self_attention import EdgeAsAttendeeSelfAttention, TranslatedKeySelfAttention
 from .config import GatbertConfig
 
 class GatbertAttention(torch.nn.Module):
@@ -20,6 +20,8 @@ class GatbertAttention(torch.nn.Module):
         super().__init__()
         if config.att_type == "edge_as_att":
             self.attention = EdgeAsAttendeeSelfAttention(config)
+        elif config.att_type == "trans_key":
+            self.attention = TranslatedKeySelfAttention(config)
         else:
             raise ValueError(f"Invalid attention type {config.att_type}")
         self.output = BertSelfOutput(config)

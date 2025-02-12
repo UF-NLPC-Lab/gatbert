@@ -6,6 +6,26 @@ from transformers.models.bert.modeling_bert import BertSelfAttention
 from .config import GatbertConfig
 from .constants import TOKEN_TO_TOKEN_RELATION_ID
 
+def sparse_softmax_and_dropout(logits: torch.Tensor, dropout: torch.nn.Dropout):
+    """
+    Args:
+        logits: sparse array of shape (batch, nodes, nodes, heads)
+        dropout: torch dropout layer
+    Returns:
+        sparse array of probabilities of shape (batch, nodes, nodes, heads, 1)
+    """
+    sparse_attention = torch.sparse.softmax(logits, dim=-2)
+    attention_vals = sparse_attention.values()
+    attention_vals = dropout(attention_vals)
+    return torch.sparse_coo_tensor(
+        indices=logits.indices(),
+        values=torch.unsqueeze(attention_vals, -1),
+        size=(*logits.shape, 1),
+        device=logits.device,
+        is_coalesced=True,
+        requires_grad=True
+    )
+
 class EdgeEmbeddings(torch.nn.Module):
     def __init__(self, config: GatbertConfig):
         super().__init__()
@@ -55,10 +75,19 @@ class GatbertSelfAttention(torch.nn.Module):
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edge_indices: Array of shape (4, total_edges) where the 4 components are (batch_index, head_node_index, tail_node_index, relation_index)
         """
-        attention_probs = self.compute_attention_probs(node_states, edge_indices).to_dense()
-        values = self.compute_values(node_states, edge_indices).to_dense()
-        prod = torch.mul(attention_probs, values)       
-        node_states = torch.sum(prod, dim=2).to_dense() # Sum over tail nodes
+        attention_probs = self.compute_attention_probs(node_states, edge_indices)
+        values = self.compute_values(node_states, edge_indices)
+
+        # Why am I converting these to dense arrays?
+        # torch.mul does indeed support sparse arrays, even if some dimensions have to be broadcast
+        # Unfortunately, when doing backpropagation, the backward op will try to do a torch.unsqueeze or
+        # similar on the broadcast operand, which is not yet supported by sparse matrices
+        # If you're reading this years later, hopefully torch has better sparse support by now.
+        attention_probs = attention_probs.to_dense()
+        values = values.to_dense()
+        prod = torch.mul(attention_probs, values)
+
+        node_states = torch.sum(prod, dim=2) # Sum over tail nodes
         node_states = torch.flatten(node_states, start_dim=-2) # Concatenate across heads
         return node_states
 
@@ -93,15 +122,77 @@ class GatbertSelfAttention(torch.nn.Module):
             Intended to be element-wise multiplied with the result of compute_attention_scores.
         """
 
+
+class TranslatedKeySelfAttention(GatbertSelfAttention):
+    """
+    Self-attention mechanism inspired from https://aclanthology.org/2022.coling-1.621/ with a few differences:
+    - We don't have edge hidden states; rather, we look up new edge embeddings at each layer
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+        # Parameters already found in BERT models
+        self.query = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.key = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.value = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.dropout = torch.nn.Dropout(config.attention_probs_dropout_prob)
+
+        # New parameters
+        self.key_edge = EdgeEmbeddings(config)
+
+        self.__sqrt_attention_size = torch.sqrt(torch.tensor(self.attention_head_size))
+
+    def load_pretrained_weights(self, other: BertSelfAttention):
+        assert self.num_attention_heads == other.num_attention_heads
+        assert self.attention_head_size == other.attention_head_size
+        assert self.hidden_size == other.query.in_features
+        self.query.load_state_dict(other.query.state_dict())
+        self.key.load_state_dict(other.key.state_dict())
+        self.value.load_state_dict(other.value.state_dict())
+
+    def compute_attention_probs(self, node_states, edge_indices):
+        (batch_size, n_nodes) = node_states.shape[:2]
+        Q = self.query(node_states)
+        K = self.key(node_states)
+
+        edge_embeddings = self.key_edge(edge_indices, batch_size, n_nodes)
+        edge_indices = edge_embeddings.indices() # Use these indices; we've coalesced across relations
+
+        # Assuming a translational theory of embedding
+        K_shifted = K[edge_indices[0], edge_indices[2]] - edge_embeddings.values()
+        K_trans = self.transpose_for_scores(K_shifted) # (num_edges, head, att_head_size)
+
+        Q_trans = self.transpose_for_scores(Q[edge_indices[0], edge_indices[1]]) # (num_edges, head, att_head_size)
+
+        # Perform a dot-product over the att_head_size dimension
+        # There's some overhead from calling einsum,
+        # but there's also overhead from reshaping the tensors to call a regular inner product function
+        logit_vals = torch.einsum("ijk,ijk->ij", Q_trans, K_trans) / self.__sqrt_attention_size
+
+
+        logits = torch.sparse_coo_tensor(
+            indices=edge_indices,
+            values=logit_vals,
+            size=(batch_size, n_nodes, n_nodes, self.num_attention_heads),
+            device=logit_vals.device,
+            is_coalesced=True,
+            requires_grad=True
+        )
+        return sparse_softmax_and_dropout(logits, self.dropout)
+
+    def compute_values(self, node_states, _):
+        V = self.value(node_states)
+        V_trans = self.transpose_for_scores(V)
+        return torch.unsqueeze(V_trans, dim=1)
+
 class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
     """
     Self-attention mechanism inspired from https://arxiv.org/abs/2002.09685 with a few differences:
     - We have unique relation embeddings for every attention layer
     - They use the same key-projection matrix for their edges as their nodes; we do not
+    - We do embedding lookups rather than "project" edges to a space (though a lookup basically is a projection)
 
     The name was chosen because we are treating edges as keys and queries that can be attended over.
-
-    Notice we don't explicitly project edges to any particular space; we instead just have direct embedding lookups.
     """
 
     def __init__(self, config):
@@ -128,10 +219,6 @@ class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
         self.value.load_state_dict(other.value.state_dict())
 
     def compute_attention_probs(self, node_states, edge_indices):
-        """
-        Returns:
-            sparse tensor of shape (batch_size, nodes, nodes, num_attention_heads)
-        """
         Q = self.query(node_states)
         K_node = self.key(node_states)
 
