@@ -53,32 +53,13 @@ class GatbertSelfAttention(torch.nn.Module):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
-            edges: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
+            edge_indices: Array of shape (4, total_edges) where the 4 components are (batch_index, head_node_index, tail_node_index, relation_index)
         """
-        (batch_size, n_nodes) = node_states.shape[:2]
-
-        logits = self.compute_attention_scores(node_states, edge_indices)
-        sparse_attention = torch.sparse.softmax(logits, dim=-2)
-        attention_vals = sparse_attention.values()
-        attention_vals = self.dropout(attention_vals)
-
-        values, V_edge_indices = self.compute_values(node_states, edge_indices)
-        V_trans = self.transpose_for_scores(values) # (num_edges, num_edges, att_head_size)
-
-        elwise_prod = torch.unsqueeze(attention_vals, -1) * V_trans # (num_edges, num_heads, att_head_size)
-        elwise_prod = torch.flatten(elwise_prod, start_dim=1) # (num_edges, all_head_size)
-        # (batch * nodes, num_edges)
-        edge_mask = torch.sparse_coo_tensor(
-            indices=torch.stack([V_edge_indices[0] * n_nodes + V_edge_indices[1], torch.arange(V_edge_indices.shape[1], device=V_edge_indices.device)]),
-            values=torch.ones(V_edge_indices.shape[1]),
-            size=(batch_size * n_nodes, V_edge_indices.shape[1]),
-            device=elwise_prod.device,
-            is_coalesced=True
-        )
-        # (batch * nodes, all_head_size)
-        flat_node_states = torch.sparse.mm(edge_mask, elwise_prod)
-        # (batch, nodes, all_head_size)
-        node_states = flat_node_states.reshape(batch_size, n_nodes, -1)
+        attention_probs = self.compute_attention_probs(node_states, edge_indices).to_dense()
+        values = self.compute_values(node_states, edge_indices).to_dense()
+        prod = torch.mul(attention_probs, values)       
+        node_states = torch.sum(prod, dim=2).to_dense() # Sum over tail nodes
+        node_states = torch.flatten(node_states, start_dim=-2) # Concatenate across heads
         return node_states
 
     @abc.abstractmethod
@@ -86,12 +67,31 @@ class GatbertSelfAttention(torch.nn.Module):
         pass
 
     @abc.abstractmethod
-    def compute_attention_scores(self, node_states, edge_indices):
-        pass
+    def compute_attention_probs(self, node_states, edge_indices):
+        """
+        Computes attention probabilities (including any dropout) between head and tail nodes.
+
+        Args:
+            node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
+            edge_indices: Array of shape (4, total_edges) where the 4 components are (batch_index, head_node_index, tail_node_index, relation_index)
+        
+        Returns:
+            Array of shape (batch, nodes, nodes, num_heads, 1). Intended to be element-wise multiplied with the result of compute_values.
+        """
 
     @abc.abstractmethod
     def compute_values(self, node_states, edge_indices):
-        pass
+        """
+        Args:
+            node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
+            edge_indices: Array of shape (4, total_edges) where the 4 components are (batch_index, head_node_index, tail_node_index, relation_index)
+
+        Returns:
+            An array of shape either (batch, 1, nodes, num_heads, att_head_size) or (batch, nodes, nodes, num_heads, att_head_size).
+            In either case, dimension 1 represents the head node. 
+
+            Intended to be element-wise multiplied with the result of compute_attention_scores.
+        """
 
 class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
     """
@@ -127,7 +127,7 @@ class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
         self.key.load_state_dict(other.key.state_dict())
         self.value.load_state_dict(other.value.state_dict())
 
-    def compute_attention_scores(self, node_states, edge_indices):
+    def compute_attention_probs(self, node_states, edge_indices):
         """
         Returns:
             sparse tensor of shape (batch_size, nodes, nodes, num_attention_heads)
@@ -155,17 +155,34 @@ class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
             is_coalesced=True,
             requires_grad=True
         )
-        return logits
+        sparse_attention = torch.sparse.softmax(logits, dim=-2)
+        attention_vals = sparse_attention.values()
+        attention_vals = self.dropout(attention_vals)
+        dropout_att = torch.sparse_coo_tensor(
+            indices=K_edge_indices,
+            values=torch.unsqueeze(attention_vals, -1),
+            size=(batch_size, n_nodes, n_nodes, self.num_attention_heads, 1),
+            device=logits_val.device,
+            is_coalesced=True,
+            requires_grad=True
+        )
+        return dropout_att
 
     def compute_values(self, node_states, edge_indices):
-        """
-
-        Returns:
-            tensor of shape (num_edges, hidden_size)
-        """
         (batch_size, n_nodes) = node_states.shape[:2]
         V_node = self.value(node_states)
         V_edge = self.value_edge(edge_indices, batch_size, n_nodes)
-        V_edge_indices = V_edge.indices() # FIXME: Why did we need to re-assign "edge_indices" ?
+        # Edge embeddings coalesces parallel edges with different relations, so we have fewer edges indices now
+        V_edge_indices = V_edge.indices() 
         V_sum = V_node[V_edge_indices[0], V_edge_indices[2]] + V_edge.values()
-        return V_sum, V_edge_indices
+        # (total_edges, num_heads, att_head_size)
+        V_sum = self.transpose_for_scores(V_sum)
+        values = torch.sparse_coo_tensor(
+            indices=V_edge_indices,
+            values=V_sum,
+            size=(batch_size, n_nodes, n_nodes, self.num_attention_heads, self.attention_head_size),
+            device=V_sum.device,
+            is_coalesced=True,
+            requires_grad=True
+        )
+        return values
