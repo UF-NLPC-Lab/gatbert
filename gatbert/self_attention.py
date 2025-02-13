@@ -5,6 +5,7 @@ from transformers.models.bert.modeling_bert import BertSelfAttention
 # Local
 from .config import GatbertConfig
 from .constants import TOKEN_TO_TOKEN_RELATION_ID
+from .rel_mat_embeddings import RelationMatrixEmbeddings
 
 def sparse_softmax_and_dropout(logits: torch.Tensor, dropout: torch.nn.Dropout):
     """
@@ -56,6 +57,11 @@ class GatbertSelfAttention(torch.nn.Module):
         self.num_attention_heads: int = config.num_attention_heads
         assert self.hidden_size % self.num_attention_heads == 0
         self.attention_head_size: int = self.hidden_size // self.num_attention_heads
+
+    def compute_simple_values(self, node_states: torch.Tensor, projection: torch.nn.Linear) -> torch.Tensor:
+        V = projection(node_states)
+        V_trans = self.transpose_for_scores(V)
+        return torch.unsqueeze(V_trans, dim=1)
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -122,6 +128,51 @@ class GatbertSelfAttention(torch.nn.Module):
             Intended to be element-wise multiplied with the result of compute_attention_scores.
         """
 
+class RelationInnerProdSelfAttention(GatbertSelfAttention):
+    def __init__(self, config: GatbertConfig, relation_embeddings: RelationMatrixEmbeddings):
+        super().__init__(config)
+        self.relation_embeddings = relation_embeddings
+        self.query = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.key = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.value = torch.nn.Linear(self.hidden_size, self.hidden_size)
+        self.dropout = torch.nn.Dropout(config.attention_probs_dropout_prob)
+
+        self.__sqrt_attention_size = torch.sqrt(torch.tensor(self.attention_head_size))
+
+    def load_pretrained_weights(self, other: BertSelfAttention):
+        assert self.num_attention_heads == other.num_attention_heads
+        assert self.attention_head_size == other.attention_head_size
+        assert self.hidden_size == other.query.in_features
+        self.query.load_state_dict(other.query.state_dict())
+        self.key.load_state_dict(other.key.state_dict())
+        self.value.load_state_dict(other.value.state_dict())
+
+    def compute_attention_probs(self, node_states, edge_indices):
+        (batch_size, n_nodes) = node_states.shape[:2]
+        Q = self.query(node_states)
+        K = self.key(node_states)
+
+        edge_embeddings = self.relation_embeddings(edge_indices, batch_size, n_nodes)
+        edge_indices = edge_embeddings.indices()
+        edge_matrices = edge_embeddings.values()
+
+        Q_trans = self.transpose_for_scores(Q[edge_indices[0], edge_indices[1]])
+        K_trans = self.transpose_for_scores(K[edge_indices[0], edge_indices[2]])
+
+        Q_trans_projected = Q_trans @ edge_matrices
+        logit_vals = torch.einsum("ijk,ijk->ij", Q_trans_projected, K_trans) / self.__sqrt_attention_size
+        logits = torch.sparse_coo_tensor(
+            indices=edge_indices,
+            values=logit_vals,
+            size=(batch_size, n_nodes, n_nodes, self.num_attention_heads),
+            is_coalesced=True,
+            requires_grad=True
+        )
+        return sparse_softmax_and_dropout(logits, self.dropout)
+
+
+    def compute_values(self, node_states, _):
+        return self.compute_simple_values(node_states, self.value)
 
 class TranslatedKeySelfAttention(GatbertSelfAttention):
     """
@@ -181,9 +232,7 @@ class TranslatedKeySelfAttention(GatbertSelfAttention):
         return sparse_softmax_and_dropout(logits, self.dropout)
 
     def compute_values(self, node_states, _):
-        V = self.value(node_states)
-        V_trans = self.transpose_for_scores(V)
-        return torch.unsqueeze(V_trans, dim=1)
+        return self.compute_simple_values(node_states, self.value)
 
 class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
     """
