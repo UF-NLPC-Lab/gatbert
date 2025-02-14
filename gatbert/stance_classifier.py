@@ -1,12 +1,13 @@
 import abc
 # 3rd Party
 import torch
-from transformers import AutoModel, BertModel, AutoConfig
+from transformers import AutoModel, BertModel, AutoConfig, PreTrainedTokenizerFast
 from transformers.models.bert.modeling_bert import BertEmbeddings, BertConfig
 # Local
 from .gatbert import GatbertModel, GatbertLayer, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance
 from .config import GatbertConfig
+from .encoder import *
 
 class StanceClassifier(torch.nn.Module):
     def __init__(self, config: GatbertConfig):
@@ -17,6 +18,10 @@ class StanceClassifier(torch.nn.Module):
     @abc.abstractmethod
     def load_pretrained_weights(self):
         pass
+
+    @classmethod
+    def get_encoder(cls, tokenizer: PreTrainedTokenizerFast) -> Encoder:
+        return cls.Encoder(tokenizer)
 
 class GraphOnlyClassifier(StanceClassifier):
     """
@@ -41,6 +46,52 @@ class GraphOnlyClassifier(StanceClassifier):
         logits = self.linear(avg_graph_hidden_states)
         return logits
 
+    class Encoder(Encoder):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer
+
+        def encode(self, sample: GraphSample) -> TensorDict:
+            assert isinstance(sample, GraphSample)
+            input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
+            mask_indices, mask_values = build_average_pool_mask(pool_inds)
+
+            mask_indices = [(0, *index) for index in mask_indices] # Prepend batch dim
+
+            device = input_ids.device
+            node_mask = torch.sparse_coo_tensor(
+                indices=torch.tensor(mask_indices, device=device).transpose(1, 0),
+                values=torch.tensor(mask_values, device=device),
+                size=(1, len(sample.kb), input_ids.shape[-1]),
+                is_coalesced=True,
+                requires_grad=True,
+                dtype=torch.float,
+                device=device
+            )
+
+            orig_text_nodes = len(sample.target) + len(sample.context)
+            # Only keep edges between two graph concepts
+            iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
+            iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
+            edge_indices = sorted(iter_edge)
+            if edge_indices:
+                edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
+            else:
+                edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
+            return {
+                "input_ids" : input_ids,
+                "pooling_mask" : node_mask,
+                "edge_indices": edge_indices,
+                "stance": torch.tensor(sample.stance.value, device=device)
+            }
+
+        def collate(self, samples: List[TensorDict]) -> TensorDict:
+            return {
+                **collate_ids(self.__tokenizer, samples),
+                **collate_graph_data(samples, return_node_counts=True),
+                'stance': torch.stack([s['stance'] for s in samples])
+            }
+
+
 class GraphClassifier(StanceClassifier):
     def __init__(self, config: GatbertConfig):
         super().__init__(config)
@@ -58,6 +109,120 @@ class GraphClassifier(StanceClassifier):
         final_hidden_state = self.bert(*args, **kwargs)
         logits = self.projection(final_hidden_state[:, 0])
         return logits
+
+
+    class Encoder(Encoder):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer
+
+        def encode(self, sample: GraphSample):
+            assert isinstance(sample, GraphSample)
+            tokenizer = self.__tokenizer
+
+            tokenized_text = tokenizer(text=sample.target,
+                                       text_pair=sample.context,
+                                       is_split_into_words=True,
+                                       return_offsets_mapping=True,
+                                       return_tensors='pt',
+                                       truncation='longest_first')
+            device = tokenized_text['input_ids'].device
+
+            kb_input_ids, kb_pool_inds = encode_kb_nodes(tokenizer, sample.kb)
+            num_kb_nodes = max(kb_pool_inds) + 1 if kb_pool_inds else 0
+
+            num_text_nodes = tokenized_text['input_ids'].shape[-1]
+            num_text_subwords = num_text_nodes
+
+            # Combine input ids
+            concat_ids = torch.concatenate([tokenized_text['input_ids'], kb_input_ids], dim=-1)
+            # Add dummy position ids for graph nodes
+            position_ids = torch.tensor(
+                [i for i in range(tokenized_text['input_ids'].shape[-1])] + \
+                [0 for _ in range(kb_input_ids.shape[-1])],
+                device=device
+            )
+            # Add dummy token_type ids for graph nodes
+            last_token_type_id = tokenized_text['token_type_ids'][..., -1][0]
+            token_type_ids = torch.concatenate([
+                tokenized_text['token_type_ids'],
+                torch.full_like(kb_input_ids, last_token_type_id)
+                ],
+                dim=-1
+            )
+
+            text_mask_inds, text_mask_values = build_identity_pool_mask(num_text_nodes)
+            kb_mask_inds, kb_mask_values = build_average_pool_mask(kb_pool_inds)
+            kb_mask_inds = [(i + num_text_nodes, j + num_text_subwords) for (i, j) in kb_mask_inds]
+
+            mask_inds = text_mask_inds + kb_mask_inds
+            mask_inds = [(0, *inds) for inds in mask_inds]
+
+            mask_inds = torch.tensor(mask_inds, device=device).transpose(1, 0)
+            mask_vals = torch.tensor(text_mask_values + kb_mask_values, device=device)
+            total_pooled_nodes = num_text_nodes + num_kb_nodes
+            node_mask = torch.sparse_coo_tensor(
+                indices=mask_inds,
+                values=mask_vals,
+                size=(1, total_pooled_nodes, concat_ids.shape[-1]),
+                is_coalesced=True,
+                requires_grad=True,
+                dtype=torch.float,
+                device=device
+            )
+
+            # old_node_index -> [new_node_indices]
+            expand_list = defaultdict(list)
+            # For token subwords, we will split a token's nodes into subwords
+            # Handle splitting of token nodes into subword nodes
+            orig_nodes_index = -1
+            for (new_nodes_index, (start, end)) in enumerate(tokenized_text['offset_mapping'].squeeze()):
+                if start != end: # Real character, not a special character
+                    if start == 0: # Start of a token
+                        orig_nodes_index += 1
+                    expand_list[orig_nodes_index].append(new_nodes_index)
+
+
+            # Indices into a sparse array (batch, max_new_nodes, max_new_nodes, relation)
+            # Need a 0 at the beginning for batch
+            new_edges = []
+            # The original token-to-token edges of a standard BERT model
+            new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(num_text_subwords), range(num_text_subwords)))
+            # The KB edges, with indices adjusted
+            orig_text_nodes = len(sample.target) + len(sample.context)
+            max_node_index = orig_text_nodes + num_kb_nodes
+            for e in sample.edges:
+                if orig_text_nodes <= e.head_node_index < max_node_index:
+                    head_list = [num_text_subwords + (e.head_node_index - orig_text_nodes)]
+                elif e.head_node_index in expand_list:
+                    head_list = expand_list[e.head_node_index]
+                else:
+                    continue
+                if orig_text_nodes <= e.tail_node_index < max_node_index:
+                    tail_list = [num_text_subwords + (e.tail_node_index - orig_text_nodes)]
+                elif e.tail_node_index in expand_list:
+                    tail_list = expand_list[e.tail_node_index]
+                else:
+                    continue
+                new_edges.extend((0, head, tail, e.relation_id) for (head, tail) in product(head_list, tail_list))
+            new_edges.sort()
+            new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
+
+            return {
+                "input_ids" : concat_ids,
+                "position_ids": position_ids,
+                "token_type_ids": token_type_ids,
+                "pooling_mask" : node_mask,
+                "edge_indices": new_edges,
+                "stance": torch.tensor(sample.stance.value, device=device)
+            }
+
+        def collate(self, samples: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            return {
+                "stance": torch.stack([s['stance'] for s in samples]),
+                **collate_ids(self.__tokenizer, samples),
+                **collate_graph_data(samples)
+            }
+    
 
 class ConcatClassifier(StanceClassifier):
     def __init__(self, config: GatbertConfig):
@@ -95,6 +260,40 @@ class ConcatClassifier(StanceClassifier):
         logits = self.linear(feature_vec)
         return logits
 
+    class Encoder(Encoder):
+        """
+        Creates samples consisting of a graph with only external information (ConceptNet, AMR, etc.)
+        and a separate sequence of tokens. The graph and tokens are totally independent.
+        """
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer
+            self.__graph_encoder = GraphOnlyClassifier.Encoder(tokenizer)
+            self.__text_encoder = BertClassifier.Encoder(tokenizer)
+    
+        def encode(self, sample: GraphSample):
+            assert isinstance(sample, GraphSample)
+            encoded_graph = self.__graph_encoder.encode(sample)
+            encoded_text = self.__text_encoder.encode(sample.to_sample())
+            encoded_graph.pop('stance')
+            return {
+                "text": encoded_text,
+                "graph": encoded_graph,
+                'stance': encoded_text.pop('stance')
+            }
+    
+        def collate(self, samples: List[Dict[str, TensorDict]]) -> TensorDict:
+            rdict = {}
+            rdict["stance"] = torch.stack([s['stance'] for s in samples])
+    
+            graph_samples = [s['graph'] for s in samples]
+            rdict['graph'] = {
+                **collate_ids(self.__tokenizer, graph_samples),
+                **collate_graph_data(graph_samples, return_node_counts=True)
+            }
+            rdict['text'] = collate_ids(self.__tokenizer, [s['text'] for s in samples], return_attention_mask=True)
+            return rdict
+
+
 class BertClassifier(StanceClassifier):
     def __init__(self, config: GatbertConfig):
         super().__init__(config)
@@ -114,3 +313,20 @@ class BertClassifier(StanceClassifier):
         last_hidden_state = bert_output['last_hidden_state'][:, 0]
         logits = self.projection(last_hidden_state)
         return logits
+
+    class Encoder(Encoder):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer
+
+        def encode(self, sample: Sample | PretokenizedSample):
+            if isinstance(sample, Sample):
+                result = self.__tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=False, return_tensors='pt')
+            elif isinstance(sample, PretokenizedSample):
+                result = self.__tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
+            else:
+                raise ValueError(f"Invalid sample type {type(sample)}")
+            result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
+            return result
+
+        def collate(self, samples: List[TensorDict]) -> TensorDict:
+            return {**collate_ids(self.__tokenizer, samples, return_attention_mask=True), **collate_stance(samples)}

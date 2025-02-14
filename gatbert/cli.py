@@ -1,16 +1,21 @@
-# STL
+# 3rd Party
 from lightning.pytorch.cli import LightningCLI
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 # Local
 from .constants import DEFAULT_MODEL
 from .modules import *
 from .data_modules import *
+from .stance_classifier import *
 
 class CustomCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
         parser.add_argument("--pretrained_model", default=DEFAULT_MODEL)
         parser.link_arguments("pretrained_model", "model.pretrained_model")
         parser.link_arguments("pretrained_model", "data.init_args.tokenizer")
+
+        parser.add_argument("--classifier", type=type[StanceClassifier], default=BertClassifier)
+        parser.link_arguments("classifier", "model.classifier")
+        parser.link_arguments("classifier", "data.init_args.classifier")
 
 def cli_main(**cli_kwargs):
 

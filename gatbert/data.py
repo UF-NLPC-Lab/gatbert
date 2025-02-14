@@ -1,14 +1,12 @@
 # STL
 from __future__ import annotations
 import csv
-from typing import Dict, Any, Generator, List, Callable, Literal
+from typing import Generator, Callable
 # 3rd Party
 import torch
-from transformers import PreTrainedTokenizerFast
 from tokenizers.pre_tokenizers import BertPreTokenizer
 # Local
 from .constants import Stance
-from .types import CorpusType, SampleType, TensorDict
 from .sample import Sample, PretokenizedSample
 from .graph_sample import GraphSample
 
@@ -60,64 +58,3 @@ def parse_vast(csv_path) -> Generator[Sample, None, None]:
 
 def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
     raise NotImplementedError
-
-def map_func_gen(f, func):
-    def mapped(*args, **kwargs):
-        return map(f, func(*args, **kwargs))
-    return mapped
-
-class Preprocessor:
-    def __init__(self,
-                 corpus_type: CorpusType,
-                 sample_type: SampleType,
-                 tokenizer: PreTrainedTokenizerFast):
-        self.corpus_type = corpus_type
-        self.sample_type = sample_type
-        self.tokenizer = tokenizer
-
-        # FIXME: Just make the encoder class a choosable hyperparameter
-
-        if corpus_type == 'graph':
-            parse_fn = parse_graph_tsv
-            if sample_type == 'token':
-                encoder = PretokenizedSample.Encoder(self.tokenizer)
-                parse_fn = map_func_gen(lambda gs: encoder.encode(gs.to_sample()), parse_fn)
-                collate_fn = encoder.collate
-            elif sample_type == 'concat':
-                encoder = GraphSample.ConcatEncoder(self.tokenizer)
-                parse_fn = map_func_gen(encoder.encode, parse_fn)
-                collate_fn = encoder.collate
-            elif sample_type in {'graph', 'stripped_graph'}:
-                if sample_type == 'stripped_graph':
-                    parse_fn = map_func_gen(GraphSample.strip_external, parse_fn)
-                gs_encoder = GraphSample.Encoder(self.tokenizer)
-                parse_fn = map_func_gen(gs_encoder.encode, parse_fn)
-                collate_fn = gs_encoder.collate
-            elif sample_type == 'graph_only':
-                encoder = GraphSample.GraphOnlyEncoder(self.tokenizer)
-                parse_fn = map_func_gen(encoder.encode, parse_fn)
-                collate_fn = encoder.collate
-            else:
-                raise ValueError(f"Invalid sample_type {sample_type}")
-        else:
-            assert sample_type == 'token'
-            if corpus_type == 'ezstance':
-                parse_fn = parse_ez_stance
-            elif corpus_type == 'semeval':
-                parse_fn = parse_semeval
-            elif corpus_type == 'vast':
-                parse_fn = parse_vast
-            else:
-                raise ValueError(f"Invalid corpus_type {corpus_type}")
-            encoder = Sample.Encoder(self.tokenizer)
-            parse_fn = map_func_gen(encoder.encode, parse_fn)
-            collate_fn = encoder.collate
-
-        self.__parse_fn = parse_fn
-        self.__collate_fn = collate_fn
-
-    def parse_file(self, path) -> Generator[TensorDict, None, None]:
-        yield from self.__parse_fn(path)
-
-    def collate(self, samples: List[TensorDict]) -> TensorDict:
-        return self.__collate_fn(samples)

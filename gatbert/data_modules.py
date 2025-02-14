@@ -5,25 +5,29 @@ from transformers import AutoTokenizer
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
-from typing import Dict, Tuple
-from .data import MapDataset, Preprocessor
+from typing import Dict, Tuple, Optional, List
+from .data import MapDataset
+from .preprocessor import Preprocessor
 from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
-from .types import CorpusType, SampleType
+from .stance_classifier import *
+from .types import CorpusType, Transform
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 sample_type: SampleType,
+                 classifier: type[StanceClassifier] = BertClassifier,
                  batch_size: int = DEFAULT_BATCH_SIZE,
-                 tokenizer: str = DEFAULT_MODEL
+                 tokenizer: str = DEFAULT_MODEL,
+                 transforms: Optional[List[Transform]] = None
                 ):
         super().__init__()
         self.save_hyperparameters()
 
         tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
+        encoder = classifier.get_encoder(tokenizer_model)
         # Protected variables
         self._preprocessor = Preprocessor(
-            self.hparams.corpus_type, self.hparams.sample_type, tokenizer_model
+            self.hparams.corpus_type, encoder, transforms
         )
 
     # Protected Methods
