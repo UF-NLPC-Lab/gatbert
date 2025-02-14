@@ -9,7 +9,7 @@ from .data_modules import *
 class CustomCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
         parser.add_argument("--pretrained_model", default=DEFAULT_MODEL)
-        parser.link_arguments("pretrained_model", "model.init_args.pretrained_model")
+        parser.link_arguments("pretrained_model", "model.pretrained_model")
         parser.link_arguments("pretrained_model", "data.init_args.tokenizer")
 
 def cli_main(**cli_kwargs):
@@ -27,7 +27,7 @@ def cli_main(**cli_kwargs):
     )
 
     return CustomCLI(
-        model_class=StanceModule, subclass_mode_model=True,
+        model_class=MyStanceModule, subclass_mode_model=False,
         datamodule_class=StanceDataModule, subclass_mode_data=True,
         trainer_defaults={
             "max_epochs": 1000,

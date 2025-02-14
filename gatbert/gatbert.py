@@ -71,9 +71,11 @@ class GatbertEncoder(torch.nn.Module):
             attention_factory = lambda i: RelationInnerProdSelfAttention(config, relation_embeddings)
         else:
             raise ValueError(f"Invalid attention type {config.att_type}")
-        self.layer = torch.nn.ModuleList(GatbertLayer(config, attention_factory(i)) for i in range(config.num_hidden_layers))
+        self.layer = torch.nn.ModuleList(GatbertLayer(config, attention_factory(i)) for i in range(config.num_graph_layers))
 
     def load_pretrained_weights(self, other: BertEncoder):
+        if len(self.layer) != len(other.layer):
+            raise Warning(f"Trying to initialize {len(self.layer)} GatbertLayers from only {len(other.layer)} BertLayers")
         for (self_layer, other_layer) in zip(self.layer, other.layer):
             self_layer.load_pretrained_weights(other_layer)
     def forward(self, node_states, edge_indices: torch.Tensor):

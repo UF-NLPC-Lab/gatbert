@@ -1,24 +1,35 @@
+import abc
 # 3rd Party
 import torch
 from transformers import AutoModel, BertModel, AutoConfig
-from transformers.models.bert.modeling_bert import BertEmbeddings
+from transformers.models.bert.modeling_bert import BertEmbeddings, BertConfig
 # Local
 from .gatbert import GatbertModel, GatbertLayer, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance
 from .config import GatbertConfig
 
-class GraphOnlyClassifier(torch.nn.Module):
+class StanceClassifier(torch.nn.Module):
+    def __init__(self, config: GatbertConfig):
+        super().__init__()
+        self.config = config
+        pass
+
+    @abc.abstractmethod
+    def load_pretrained_weights(self):
+        pass
+
+class GraphOnlyClassifier(StanceClassifier):
     """
     Produces a hidden state summarizing just a graph (no text)
     """
-    def __init__(self,
-                 pretrained_model_name: str,
-                 config: GatbertConfig):
-        super().__init__()
+    def __init__(self, config: GatbertConfig):
+        super().__init__(config)
         self.concept_embeddings = GatbertEmbeddings(config)
-        self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(pretrained_model_name).embeddings)
         self.gat = GatbertEncoder(config)
         self.linear = torch.nn.Linear(config.hidden_size, len(Stance), bias=False)
+
+    def load_pretrained_weights(self):
+        self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).embeddings)
 
     def forward(self, input_ids, pooling_mask, edge_indices, node_counts):
         # Graph Calculation
@@ -30,38 +41,42 @@ class GraphOnlyClassifier(torch.nn.Module):
         logits = self.linear(avg_graph_hidden_states)
         return logits
 
-class GraphClassifier(torch.nn.Module):
+class GraphClassifier(StanceClassifier):
     def __init__(self, config: GatbertConfig):
-        super().__init__()
+        super().__init__(config)
         self.bert = GatbertModel(config)
         self.projection = torch.nn.Linear(
             config.hidden_size,
             out_features=len(Stance),
             bias=False
         )
+
+    def load_pretrained_weights(self):
+        self.bert.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model))
+
     def forward(self, *args, **kwargs):
         final_hidden_state = self.bert(*args, **kwargs)
         logits = self.projection(final_hidden_state[:, 0])
         return logits
 
-class ConcatClassifier(torch.nn.Module):
-    def __init__(self,
-                 pretrained_model_name: str,
-                 config: GatbertConfig):
+class ConcatClassifier(StanceClassifier):
+    def __init__(self, config: GatbertConfig):
         """
         Args:
             pretrained_model_name: model to load for text portion of the model
             config: config for the graph portion of the model
         """
-        super().__init__()
+        super().__init__(config)
 
-        self.bert = BertModel.from_pretrained(pretrained_model_name)
+        self.bert = BertModel.from_pretrained(config.base_model)
         self.concept_embeddings = GatbertEmbeddings(config)
-        self.concept_embeddings.load_pretrained_weights(self.bert.embeddings)
         self.gat = GatbertEncoder(config)
 
         self.linear = torch.nn.Linear(config.hidden_size + self.bert.config.hidden_size, len(Stance), bias=False)
     
+    def load_pretrained_weights(self):
+        self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).embeddings)
+
     def forward(self, text, graph):
         # Text Calculation
         bert_out = self.bert(**text)
@@ -80,15 +95,20 @@ class ConcatClassifier(torch.nn.Module):
         logits = self.linear(feature_vec)
         return logits
 
-class BertClassifier(torch.nn.Module):
-    def __init__(self, pretrained_model_name: str):
-        super().__init__()
-        self.bert = AutoModel.from_pretrained(pretrained_model_name)
+class BertClassifier(StanceClassifier):
+    def __init__(self, config: GatbertConfig):
+        super().__init__(config)
+        self.bert = BertModel( BertConfig.from_pretrained(config.base_model) )
         self.projection = torch.nn.Linear(
             self.bert.config.hidden_size,
             out_features=len(Stance),
             bias=False
         )
+
+    def load_pretrained_weights(self):
+        # TODO: Find a cleaner way than just reinstantiating the object
+        self.bert = BertModel.from_pretrained(self.config.base_model)
+
     def forward(self, *args, **kwargs):
         bert_output = self.bert(*args, **kwargs)
         last_hidden_state = bert_output['last_hidden_state'][:, 0]
