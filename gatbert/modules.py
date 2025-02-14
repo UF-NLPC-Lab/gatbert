@@ -64,6 +64,7 @@ class GraphOnlyStanceModule(StanceModule):
             AutoConfig.from_pretrained(self.hparams.pretrained_model),
             n_relations=NUM_CN_RELATIONS,
             att_type=self.hparams.att_type)
+        model_config.num_hidden_layers = 2 # TODO: Make configurable
         self.__classifier = GraphOnlyClassifier(pretrained_model, model_config)
     def forward(self, *args, **kwargs):
         return self.__classifier(*args, **kwargs)
