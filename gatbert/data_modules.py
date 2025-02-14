@@ -15,7 +15,7 @@ from .types import CorpusType, Transform
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 classifier: type[StanceClassifier] = BertClassifier,
+                 classifier: type[StanceClassifier] = TextClassifier,
                  batch_size: int = DEFAULT_BATCH_SIZE,
                  tokenizer: str = DEFAULT_MODEL,
                  transforms: Optional[List[Transform]] = None

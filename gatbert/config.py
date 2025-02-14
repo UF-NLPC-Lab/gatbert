@@ -15,7 +15,7 @@ class GatbertConfig:
                  num_graph_layers: Optional[int] = None,
                  att_type: AttentionType = 'edge_as_att',
                  base_model: str = DEFAULT_MODEL):
-        self.__wrapped = config
+        self.wrapped = config
         self.__num_graph_layers = num_graph_layers
         self.n_relations = n_relations
         self.att_type = att_type
@@ -23,7 +23,7 @@ class GatbertConfig:
 
     @property
     def num_graph_layers(self):
-        return self.__num_graph_layers if self.__num_graph_layers is not None else self.__wrapped.num_hidden_layers
+        return self.__num_graph_layers if self.__num_graph_layers is not None else self.wrapped.num_hidden_layers
 
     def __getattr__(self, name):
-        return getattr(self.__wrapped, name)
+        return getattr(self.wrapped, name)

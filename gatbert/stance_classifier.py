@@ -1,10 +1,10 @@
 import abc
 # 3rd Party
 import torch
-from transformers import AutoModel, BertModel, AutoConfig, PreTrainedTokenizerFast
-from transformers.models.bert.modeling_bert import BertEmbeddings, BertConfig
+from transformers import BertModel, PreTrainedTokenizerFast
+from transformers.models.bert.modeling_bert import BertConfig
 # Local
-from .gatbert import GatbertModel, GatbertLayer, GatbertEncoder, GatbertEmbeddings
+from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance
 from .config import GatbertConfig
 from .encoder import *
@@ -23,7 +23,7 @@ class StanceClassifier(torch.nn.Module):
     def get_encoder(cls, tokenizer: PreTrainedTokenizerFast) -> Encoder:
         return cls.Encoder(tokenizer)
 
-class GraphOnlyClassifier(StanceClassifier):
+class ExternalClassifier(StanceClassifier):
     """
     Produces a hidden state summarizing just a graph (no text)
     """
@@ -92,10 +92,10 @@ class GraphOnlyClassifier(StanceClassifier):
             }
 
 
-class GraphClassifier(StanceClassifier):
+class HybridClassifier(StanceClassifier):
     def __init__(self, config: GatbertConfig):
         super().__init__(config)
-        self.bert = GatbertModel(config)
+        self.gatbert = GatbertModel(config)
         self.projection = torch.nn.Linear(
             config.hidden_size,
             out_features=len(Stance),
@@ -103,10 +103,10 @@ class GraphClassifier(StanceClassifier):
         )
 
     def load_pretrained_weights(self):
-        self.bert.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model))
+        self.gatbert.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model))
 
     def forward(self, *args, **kwargs):
-        final_hidden_state = self.bert(*args, **kwargs)
+        final_hidden_state = self.gatbert(*args, **kwargs)
         logits = self.projection(final_hidden_state[:, 0])
         return logits
 
@@ -233,7 +233,7 @@ class ConcatClassifier(StanceClassifier):
         """
         super().__init__(config)
 
-        self.bert = BertModel.from_pretrained(config.base_model)
+        self.bert = BertModel(config.wrapped)
         self.concept_embeddings = GatbertEmbeddings(config)
         self.gat = GatbertEncoder(config)
 
@@ -241,6 +241,8 @@ class ConcatClassifier(StanceClassifier):
     
     def load_pretrained_weights(self):
         self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).embeddings)
+        # FIXME: Again, need a better approach than just reinstantiating the model
+        self.bert = BertModel.from_pretrained(self.config.base_model)
 
     def forward(self, text, graph):
         # Text Calculation
@@ -267,8 +269,8 @@ class ConcatClassifier(StanceClassifier):
         """
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.__tokenizer = tokenizer
-            self.__graph_encoder = GraphOnlyClassifier.Encoder(tokenizer)
-            self.__text_encoder = BertClassifier.Encoder(tokenizer)
+            self.__graph_encoder = ExternalClassifier.Encoder(tokenizer)
+            self.__text_encoder = TextClassifier.Encoder(tokenizer)
     
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
@@ -294,10 +296,10 @@ class ConcatClassifier(StanceClassifier):
             return rdict
 
 
-class BertClassifier(StanceClassifier):
+class TextClassifier(StanceClassifier):
     def __init__(self, config: GatbertConfig):
         super().__init__(config)
-        self.bert = BertModel( BertConfig.from_pretrained(config.base_model) )
+        self.bert = BertModel(config.wrapped)
         self.projection = torch.nn.Linear(
             self.bert.config.hidden_size,
             out_features=len(Stance),

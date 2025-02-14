@@ -6,7 +6,7 @@ from transformers import AutoConfig
 # Local
 from .f1_calc import F1Calc
 from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS, DEFAULT_ATT_TYPE
-from .stance_classifier import BertClassifier, StanceClassifier
+from .stance_classifier import TextClassifier, StanceClassifier
 from .config import GatbertConfig
 from .types import AttentionType
 
@@ -60,7 +60,7 @@ class MyStanceModule(StanceModule):
                  pretrained_model: str = DEFAULT_MODEL,
                  att_type: AttentionType = DEFAULT_ATT_TYPE,
                  num_graph_layers: Optional[int] = None,
-                 classifier: type[StanceClassifier] = BertClassifier,
+                 classifier: type[StanceClassifier] = TextClassifier,
                  load_pretrained_weights: bool = True,
     ):
         super().__init__()

@@ -13,7 +13,7 @@ class CustomCLI(LightningCLI):
         parser.link_arguments("pretrained_model", "model.pretrained_model")
         parser.link_arguments("pretrained_model", "data.init_args.tokenizer")
 
-        parser.add_argument("--classifier", type=type[StanceClassifier], default=BertClassifier)
+        parser.add_argument("--classifier", type=type[StanceClassifier], default=TextClassifier)
         parser.link_arguments("classifier", "model.classifier")
         parser.link_arguments("classifier", "data.init_args.classifier")
 
