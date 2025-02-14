@@ -1,10 +1,34 @@
 # 3rd Party
 import torch
 from transformers import AutoModel, BertModel, AutoConfig
+from transformers.models.bert.modeling_bert import BertEmbeddings
 # Local
 from .gatbert import GatbertModel, GatbertLayer, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance
 from .config import GatbertConfig
+
+class GraphOnlyClassifier(torch.nn.Module):
+    """
+    Produces a hidden state summarizing just a graph (no text)
+    """
+    def __init__(self,
+                 pretrained_model_name: str,
+                 config: GatbertConfig):
+        super().__init__()
+        self.concept_embeddings = GatbertEmbeddings(config)
+        self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(pretrained_model_name).embeddings)
+        self.gat = GatbertEncoder(config)
+        self.linear = torch.nn.Linear(config.hidden_size, len(Stance), bias=False)
+
+    def forward(self, input_ids, pooling_mask, edge_indices, node_counts):
+        # Graph Calculation
+        graph_embeddings = self.concept_embeddings(input_ids=input_ids,
+                                                   pooling_mask=pooling_mask)
+        graph_hidden_states = self.gat(graph_embeddings, edge_indices)
+        node_counts = torch.maximum(node_counts, torch.tensor(1))
+        avg_graph_hidden_states = torch.sum(graph_hidden_states, dim=1) / torch.unsqueeze(node_counts, dim=-1)
+        logits = self.linear(avg_graph_hidden_states)
+        return logits
 
 class GraphClassifier(torch.nn.Module):
     def __init__(self, config: GatbertConfig):

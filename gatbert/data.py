@@ -75,6 +75,8 @@ class Preprocessor:
         self.sample_type = sample_type
         self.tokenizer = tokenizer
 
+        # FIXME: Just make the encoder class a choosable hyperparameter
+
         if corpus_type == 'graph':
             parse_fn = parse_graph_tsv
             if sample_type == 'token':
@@ -91,6 +93,10 @@ class Preprocessor:
                 gs_encoder = GraphSample.Encoder(self.tokenizer)
                 parse_fn = map_func_gen(gs_encoder.encode, parse_fn)
                 collate_fn = gs_encoder.collate
+            elif sample_type == 'graph_only':
+                encoder = GraphSample.GraphOnlyEncoder(self.tokenizer)
+                parse_fn = map_func_gen(encoder.encode, parse_fn)
+                collate_fn = encoder.collate
             else:
                 raise ValueError(f"Invalid sample_type {sample_type}")
         else:
@@ -109,29 +115,6 @@ class Preprocessor:
 
         self.__parse_fn = parse_fn
         self.__collate_fn = collate_fn
-
-    def __encode_sample(self, sample: Sample) -> TensorDict:
-        result = self.tokenizer(text=sample.target, text_pair=sample.context, return_tensors='pt')
-        if 'token_type_ids' in result:
-            result.pop('token_type_ids')
-        result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
-        return result
-
-    def __encode_pretokenized(self, sample: PretokenizedSample) -> TensorDict:
-        result = self.tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
-        result['stance'] = torch.tensor(sample.stance.value, device=result['input_ids'].device)
-        return result
-
-    def __simple_collate(self, samples: List[TensorDict]) -> TensorDict:
-        token_padding = self.tokenizer.pad_token_id
-        type_padding = self.tokenizer.pad_token_type_id
-        batched = {}
-        batched['input_ids'] = torch.nn.utils.rnn.pad_sequence([s['input_ids'].squeeze() for s in samples], batch_first=True, padding_value=token_padding)
-        if "token_type_ids" in samples[0]:
-            batched['token_type_ids'] = torch.nn.utils.rnn.pad_sequence([s['token_type_ids'].squeeze() for s in samples], batch_first=True, padding_value=type_padding)
-        batched['attention_mask'] = batched['input_ids'] != token_padding
-        batched['stance'] = torch.stack([s['stance'] for s in samples], dim=0)
-        return batched
 
     def parse_file(self, path) -> Generator[TensorDict, None, None]:
         yield from self.__parse_fn(path)

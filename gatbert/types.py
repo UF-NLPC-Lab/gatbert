@@ -5,7 +5,7 @@ import torch
 
 CorpusType = Literal['ezstance', 'semeval', 'vast', 'graph']
 
-SampleType = Literal['token', 'graph', 'stripped_graph', 'concat']
+SampleType = Literal['token', 'graph', 'stripped_graph', 'graph_only', 'concat']
 
 AttentionType = Literal['edge_as_att', 'trans_key', 'rel_mat']
 

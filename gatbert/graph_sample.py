@@ -260,13 +260,11 @@ class GraphSample:
                                edges=list(self.edges)
             )
 
-    class ConcatEncoder:
+    class GraphOnlyEncoder:
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.__tokenizer = tokenizer
-            self.__text_encoder = PretokenizedSample.Encoder(tokenizer)
 
-        def encode(self, sample: GraphSample):
-
+        def encode(self, sample: GraphSample) -> TensorDict:
             input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
             mask_indices, mask_values = build_average_pool_mask(pool_inds)
 
@@ -292,18 +290,34 @@ class GraphSample:
                 edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
             else:
                 edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
+            return {
+                "input_ids" : input_ids,
+                "pooling_mask" : node_mask,
+                "edge_indices": edge_indices,
+                "stance": torch.tensor(sample.stance.value, device=device)
+            }
 
+        def collate(self, samples: List[TensorDict]) -> TensorDict:
+            return {
+                **collate_ids(self.__tokenizer, samples),
+                **collate_graph_data(samples, return_node_counts=True),
+                'stance': torch.stack([s['stance'] for s in samples])
+            }
 
+    class ConcatEncoder:
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+            self.__tokenizer = tokenizer
+            self.__graph_encoder = GraphSample.GraphOnlyEncoder(tokenizer)
+            self.__text_encoder = PretokenizedSample.Encoder(tokenizer)
+
+        def encode(self, sample: GraphSample):
+            encoded_graph = self.__graph_encoder.encode(sample)
             encoded_text = self.__text_encoder.encode(sample.to_sample())
-            stance = encoded_text.pop('stance')
+            encoded_graph.pop('stance')
             return {
                 "text": encoded_text,
-                "graph": {
-                    "input_ids" : input_ids,
-                    "pooling_mask" : node_mask,
-                    "edge_indices": edge_indices
-                },
-                'stance': stance
+                "graph": encoded_graph,
+                'stance': encoded_text.pop('stance')
             }
 
         def collate(self, samples: List[Dict[str, TensorDict]]) -> TensorDict:
