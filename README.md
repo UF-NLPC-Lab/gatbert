@@ -52,6 +52,9 @@ I'd budget an hour for this process.
 
 ## Running Experiments
 
+If you're a developer on this project, you should read our [PyTorch Lightning guide](https://github.com/UF-NLPC-Lab/Guides/tree/main/pytorch-lightning),
+as it provides additional context on our development environment.
+
 Here's an example of how to run different models with different data using PyTorch lightning configs:
 
 ```bash
