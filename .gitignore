@@ -9,3 +9,4 @@ lightning_logs/
 
 *yaml
 !environment.yaml
+!sample_configs/*.yaml

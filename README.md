@@ -1,5 +1,12 @@
 # gatbert
 
+## Dependencies
+
+```bash
+conda env create -f environment.yaml
+conda activate gatbert
+```
+
 ## Downloading Data
 
 - [EZStance](https://github.com/chenyez/EZ-STANCE)
@@ -41,3 +48,49 @@ python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_trai
 python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_val_all_onecol.csv   --graph graph.json -o val_graph.tsv
 ```
 I'd budget an hour for this process.
+
+
+## Running Experiments
+
+Here's an example of how to run different models with different data using PyTorch lightning configs:
+
+```bash
+#!/bin/bash
+conda activate gatbert
+function run_exp()
+{
+	version=v$(date +"%Y%m%d%H%M%S")
+	CLI_ARGS="-c $BASE_CONFIG --classifier $CLASSIFIER --data $DATA_CONFIG --trainer.logger.init_args.version $version $EXTRA_ARGS"
+	# Always print the config once first, for logging purposes
+	python -m gatbert.fit_and_test $CLI_ARGS --print_config
+	python -m gatbert.fit_and_test $CLI_ARGS
+}
+
+BASE_CONFIG=sample_configs/base.yaml
+
+DATA_CONFIG=sample_configs/graph_data.yaml
+CLASSIFIER="gatbert.stance_classifier.HybridClassifier"
+run_exp
+
+CLASSIFIER="gatbert.stance_classifier.HybridClassifier"
+EXTRA_ARGS='--data.transforms [rm_external]'
+run_exp
+
+CLASSIFIER="gatbert.stance_classifier.ExternalClassifier"
+EXTRA_ARGS="--model.num_graph_layers 2"
+run_exp
+
+CLASSIFIER="gatbert.stance_classifier.ConcatClassifier"
+EXTRA_ARGS="--model.num_graph_layers 2"
+run_exp
+
+DATA_CONFIG=sample_configs/raw_data.yaml
+CLASSIFIER="gatbert.stance_classifier.TextClassifier"
+unset EXTRA_ARGS
+run_exp
+```
+
+You will need to update the following fields to run it on your machine:
+- `base.yaml`: `trainer.logger.init_args.save_dir`
+- `raw_data.yaml`: the data paths under `init_args.partitions`
+- `graph_data.yaml`: the data paths under `init_args.partitions`
