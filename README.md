@@ -1,6 +1,15 @@
 # gatbert
 
-## Making ConceptNet Graph Samples
+## Downloading Data
+
+- [EZStance](https://github.com/chenyez/EZ-STANCE)
+- [VAST](https://github.com/emilyallaway/zero-shot-stance/tree/master/data/VAST)
+- [SemEval2016-Task6](https://www.saifmohammad.com/WebDocs/stance-data-all-annotations.zip)
+
+
+## ConceptNet Preprocessing
+
+### Extracting a ConceptNet Sugraph
 
 One way or another, you're going to need to have an instance of the ConceptNet postgres database running.
 See our [guide](https://github.com/UF-NLPC-Lab/Guides/tree/main/conceptnet) on hosting ConceptNet using Apptainer.
@@ -22,6 +31,8 @@ conda activate gatbert
 python -m gatbert.extract_cn --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_train_all_onecol.csv -o graph.json
 ```
 I'd budget 4 hours for this process.
+
+### Making ConceptNet Graph Samples
 
 Then you can use the extracted graph to make graph-based samples (from both training and other partitions):
 ```bash
