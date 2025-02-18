@@ -5,8 +5,8 @@ import torch
 
 CorpusType = Literal['ezstance', 'semeval', 'vast', 'graph']
 
-SampleType = Literal['token', 'graph', 'stripped_graph', 'concat']
+AttentionType = Literal['edge_as_att', 'trans_key', 'rel_mat']
 
-AttentionType = Literal['edge_as_att', 'trans_key']
+Transform = Literal['rm_external']
 
 TensorDict = Dict[str, torch.Tensor]

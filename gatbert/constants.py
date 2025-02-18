@@ -31,6 +31,8 @@ ENCODED_FIELDS = {
     "position_ids",
 }
 
+DEFAULT_ATT_TYPE = 'edge_as_att'
+
 # DEFAULT_MODEL = "textattack/roberta-base-MNLI"
 DEFAULT_MODEL = "bert-base-uncased"
 """

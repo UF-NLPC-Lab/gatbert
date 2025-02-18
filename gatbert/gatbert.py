@@ -2,7 +2,7 @@
 from typing import Optional
 # 3rd Party
 import torch
-from transformers.models.bert.modeling_bert import BertSelfAttention, \
+from transformers.models.bert.modeling_bert import \
     BertSelfOutput, \
     BertIntermediate, \
     BertOutput, \
@@ -10,20 +10,16 @@ from transformers.models.bert.modeling_bert import BertSelfAttention, \
     BertLayer, \
     BertEncoder, \
     BertEmbeddings, \
-    BertModel, BertConfig
+    BertModel
 # Local
-from .self_attention import EdgeAsAttendeeSelfAttention, TranslatedKeySelfAttention
+from .self_attention import GatbertSelfAttention, EdgeAsAttendeeSelfAttention, TranslatedKeySelfAttention, RelationInnerProdSelfAttention
+from .rel_mat_embeddings import RelationMatrixEmbeddings
 from .config import GatbertConfig
 
 class GatbertAttention(torch.nn.Module):
-    def __init__(self, config: GatbertConfig):
+    def __init__(self, config: GatbertConfig, self_attention: GatbertSelfAttention):
         super().__init__()
-        if config.att_type == "edge_as_att":
-            self.attention = EdgeAsAttendeeSelfAttention(config)
-        elif config.att_type == "trans_key":
-            self.attention = TranslatedKeySelfAttention(config)
-        else:
-            raise ValueError(f"Invalid attention type {config.att_type}")
+        self.attention = self_attention
         self.output = BertSelfOutput(config)
 
     def load_pretrained_weights(self, other: BertAttention):
@@ -45,9 +41,9 @@ class GatbertLayer(torch.nn.Module):
     """
     Parallels HF BertLayer class
     """
-    def __init__(self, config: GatbertConfig):
+    def __init__(self, config: GatbertConfig, self_attention: GatbertSelfAttention):
         super().__init__()
-        self.attention = GatbertAttention(config)
+        self.attention = GatbertAttention(config, self_attention)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
     def load_pretrained_weights(self, other: BertLayer):
@@ -66,8 +62,20 @@ class GatbertLayer(torch.nn.Module):
 class GatbertEncoder(torch.nn.Module):
     def __init__(self, config: GatbertConfig):
         super().__init__()
-        self.layer = torch.nn.ModuleList(GatbertLayer(config) for _ in range(config.num_hidden_layers))
+        if config.att_type == "edge_as_att":
+            attention_factory = lambda i: EdgeAsAttendeeSelfAttention(config)
+        elif config.att_type == "trans_key":
+            attention_factory = lambda i: TranslatedKeySelfAttention(config)
+        elif config.att_type == "rel_mat":
+            relation_embeddings = RelationMatrixEmbeddings(config.n_relations, config.hidden_size // config.num_attention_heads)
+            attention_factory = lambda i: RelationInnerProdSelfAttention(config, relation_embeddings)
+        else:
+            raise ValueError(f"Invalid attention type {config.att_type}")
+        self.layer = torch.nn.ModuleList(GatbertLayer(config, attention_factory(i)) for i in range(config.num_graph_layers))
+
     def load_pretrained_weights(self, other: BertEncoder):
+        if len(self.layer) != len(other.layer):
+            raise Warning(f"Trying to initialize {len(self.layer)} GatbertLayers from only {len(other.layer)} BertLayers")
         for (self_layer, other_layer) in zip(self.layer, other.layer):
             self_layer.load_pretrained_weights(other_layer)
     def forward(self, node_states, edge_indices: torch.Tensor):

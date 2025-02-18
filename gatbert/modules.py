@@ -1,11 +1,12 @@
+from typing import Optional
 # 3rd Party
 import torch
 import lightning as L
-from transformers import AutoConfig, AutoModel
+from transformers import AutoConfig
 # Local
 from .f1_calc import F1Calc
-from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS
-from .stance_classifier import GraphClassifier, BertClassifier, ConcatClassifier
+from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS, DEFAULT_ATT_TYPE
+from .stance_classifier import TextClassifier, StanceClassifier
 from .config import GatbertConfig
 from .types import AttentionType
 
@@ -53,43 +54,27 @@ class StanceModule(L.LightningModule):
         self.log(f"{prefix}_macro_f1", calc.macro_f1)
         calc.reset()
 
-class GraphStanceModule(StanceModule):
+
+class MyStanceModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
+                 att_type: AttentionType = DEFAULT_ATT_TYPE,
+                 num_graph_layers: Optional[int] = None,
+                 classifier: type[StanceClassifier] = TextClassifier,
                  load_pretrained_weights: bool = True,
-                 att_type: AttentionType = 'edge_as_att'):
+    ):
         super().__init__()
         self.save_hyperparameters()
-
-        model_config = GatbertConfig(AutoConfig.from_pretrained(self.hparams.pretrained_model), n_relations=NUM_CN_RELATIONS, att_type=self.hparams.att_type)
-        self.__classifier = GraphClassifier(model_config)
+        model_config = GatbertConfig(
+            AutoConfig.from_pretrained(self.hparams.pretrained_model),
+            n_relations=NUM_CN_RELATIONS,
+            num_graph_layers=self.hparams.num_graph_layers,
+            att_type=self.hparams.att_type,
+            base_model=self.hparams.pretrained_model,
+        )
+        # Can't do self.hparams.classifier like I normally would becaues that's still a string...?
+        self.__classifier: StanceClassifier = classifier(model_config)
         if self.hparams.load_pretrained_weights:
-            orig_model = AutoModel.from_pretrained(self.hparams.pretrained_model)
-            self.__classifier.bert.load_pretrained_weights(orig_model)
-
-    def forward(self, *args, **kwargs):
-        return self.__classifier(*args, **kwargs)
-
-class ConcatStanceModule(StanceModule):
-    def __init__(self,
-                 pretrained_model: str = DEFAULT_MODEL,
-                 att_type: AttentionType = 'edge_as_att'):
-        super().__init__()
-        self.save_hyperparameters()
-        model_config = GatbertConfig(AutoConfig.from_pretrained(self.hparams.pretrained_model),
-                                    n_relations=NUM_CN_RELATIONS,
-                                    att_type=self.hparams.att_type)
-        model_config.num_hidden_layers = 2 # TODO: Make configurable once it matters
-        self.__classifier = ConcatClassifier(pretrained_model, model_config)
-    def forward(self, *args, **kwargs):
-        return self.__classifier(*args, **kwargs)
-    
-class BertStanceModule(StanceModule):
-    def __init__(self,
-                 pretrained_model: str = DEFAULT_MODEL):
-        super().__init__()
-        self.save_hyperparameters()
-        self.__classifier = BertClassifier(pretrained_model)
-
+            self.__classifier.load_pretrained_weights()
     def forward(self, *args, **kwargs):
         return self.__classifier(*args, **kwargs)
