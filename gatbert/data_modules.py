@@ -24,7 +24,7 @@ class StanceDataModule(L.LightningDataModule):
         self.save_hyperparameters()
 
         tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
-        encoder = classifier.get_encoder(tokenizer_model)
+        encoder = classifier.get_encoder(tokenizer_model, transforms)
         # Protected variables
         self._preprocessor = Preprocessor(
             self.hparams.corpus_type, encoder, transforms

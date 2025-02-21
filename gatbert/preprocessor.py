@@ -35,7 +35,8 @@ class Preprocessor:
                 'rm_external': self.rm_external
             }
             for t in transforms:
-                parse_fn = map_func_gen(transform_map[t], parse_fn)
+                if t in transform_map:
+                    parse_fn = map_func_gen(transform_map[t], parse_fn)
         parse_fn = map_func_gen(encoder.encode, parse_fn)
         self.__parse_fn = parse_fn
 

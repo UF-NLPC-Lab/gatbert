@@ -1,9 +1,12 @@
 import abc
+import inspect
+from typing import List, Optional
 # 3rd Party
 import torch
 from transformers import BertModel, PreTrainedTokenizerFast
 from transformers.models.bert.modeling_bert import BertConfig
 # Local
+from .types import Transform
 from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance
 from .config import GatbertConfig
@@ -20,8 +23,14 @@ class StanceClassifier(torch.nn.Module):
         pass
 
     @classmethod
-    def get_encoder(cls, tokenizer: PreTrainedTokenizerFast) -> Encoder:
-        return cls.Encoder(tokenizer)
+    def get_encoder(cls, tokenizer: PreTrainedTokenizerFast, transforms: Optional[List[Transform]] = None) -> Encoder:
+        # Because I didn't feel like adding a second argument to these other classes
+        constructor = cls.Encoder
+        params = inspect.signature(constructor).parameters
+        kwargs = {}
+        if "transforms" in params:
+            kwargs['transforms'] = transforms
+        return constructor(tokenizer, **kwargs)
 
 class ExternalClassifier(StanceClassifier):
     """
@@ -112,8 +121,11 @@ class HybridClassifier(StanceClassifier):
 
 
     class Encoder(Encoder):
-        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast, transforms: Optional[List[Transform]] = None):
             self.__tokenizer = tokenizer
+            if not transforms:
+                transforms = []
+            self.__cls_global_edges = "cls_global_edges" in transforms
 
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
@@ -204,6 +216,16 @@ class HybridClassifier(StanceClassifier):
                 else:
                     continue
                 new_edges.extend((0, head, tail, e.relation_id) for (head, tail) in product(head_list, tail_list))
+
+            # Additional edges linking the CLS node to the external nodes
+            if self.__cls_global_edges:
+                global_edges = []
+                for target in range(num_text_subwords, max_node_index):
+                    global_edges.append((0,      0, target, TOKEN_TO_KB_RELATION_ID))
+                    global_edges.append((0, target,      0, TOKEN_TO_KB_RELATION_ID))
+                new_edges.extend(global_edges)
+
+
             new_edges.sort()
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
 
