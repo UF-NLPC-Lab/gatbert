@@ -110,13 +110,24 @@ class HybridClassifier(StanceClassifier):
             out_features=len(Stance),
             bias=False
         )
+        self.__avg_pool = True
 
     def load_pretrained_weights(self):
         self.gatbert.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model))
 
-    def forward(self, *args, **kwargs):
-        final_hidden_state = self.gatbert(*args, **kwargs)
-        logits = self.projection(final_hidden_state[:, 0])
+    def forward(self, **kwargs):
+        final_hidden_state = self.gatbert(**kwargs)
+
+        if self.__avg_pool:
+            with torch.no_grad():
+                pooling_mask = kwargs['pooling_mask']
+                not_padding = torch.any(pooling_mask.to_dense(), axis=-1, keepdim=True)
+            weighted_states = final_hidden_state * not_padding
+            node_counts = torch.sum(torch.squeeze(not_padding), axis=-1, keepdim=True)
+            pooled = torch.sum(weighted_states, axis=1) / node_counts
+            logits = self.projection(pooled)
+        else:
+            logits = self.projection(final_hidden_state[:, 0])
         return logits
 
 
