@@ -12,7 +12,11 @@ from transformers.models.bert.modeling_bert import \
     BertEmbeddings, \
     BertModel
 # Local
-from .self_attention import GatbertSelfAttention, EdgeAsAttendeeSelfAttention, TranslatedKeySelfAttention, RelationInnerProdSelfAttention
+from .self_attention import GatbertSelfAttention, \
+    EdgeAsAttendeeSelfAttention, \
+    TranslatedKeySelfAttention, \
+    RelationInnerProdSelfAttention, \
+    HeterogeneousSelfAttention
 from .rel_mat_embeddings import RelationMatrixEmbeddings
 from .config import GatbertConfig
 
@@ -26,13 +30,14 @@ class GatbertAttention(torch.nn.Module):
         self.attention.load_pretrained_weights(other.self)
         self.output.load_state_dict(other.output.state_dict())
 
-    def forward(self, hidden_states: torch.Tensor, edge_indices: torch.Tensor):
+    def forward(self, hidden_states: torch.Tensor, edge_indices: torch.Tensor,
+                node_type_ids: torch.Tensor):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edge_states: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
         """
-        self_outputs = self.attention(hidden_states, edge_indices)
+        self_outputs = self.attention(hidden_states, edge_indices, node_type_ids=node_type_ids)
         outputs = self.output(self_outputs, hidden_states)
 
         return outputs
@@ -50,9 +55,10 @@ class GatbertLayer(torch.nn.Module):
         self.attention.load_pretrained_weights(other.attention)
         self.intermediate.load_state_dict(other.intermediate.state_dict())
         self.output.load_state_dict(other.output.state_dict())
-    def forward(self, node_states: torch.Tensor, edge_indices: torch.Tensor):
+    def forward(self, node_states: torch.Tensor, edge_indices: torch.Tensor,
+                node_type_ids: torch.Tensor):
 
-        node_attention_output = self.attention(node_states, edge_indices)
+        node_attention_output = self.attention(node_states, edge_indices, node_type_ids=node_type_ids)
 
         new_node_states = self.intermediate(node_attention_output)
         new_node_states = self.output(new_node_states, node_attention_output)
@@ -69,6 +75,9 @@ class GatbertEncoder(torch.nn.Module):
         elif config.att_type == "rel_mat":
             relation_embeddings = RelationMatrixEmbeddings(config.n_relations, config.hidden_size // config.num_attention_heads)
             attention_factory = lambda i: RelationInnerProdSelfAttention(config, relation_embeddings)
+        elif config.att_type == "hetero":
+            relation_embeddings = RelationMatrixEmbeddings(config.n_relations, config.hidden_size // config.num_attention_heads)
+            attention_factory = lambda i: HeterogeneousSelfAttention(config, relation_embeddings)
         else:
             raise ValueError(f"Invalid attention type {config.att_type}")
         self.layer = torch.nn.ModuleList(GatbertLayer(config, attention_factory(i)) for i in range(config.num_graph_layers))
@@ -78,9 +87,13 @@ class GatbertEncoder(torch.nn.Module):
             raise Warning(f"Trying to initialize {len(self.layer)} GatbertLayers from only {len(other.layer)} BertLayers")
         for (self_layer, other_layer) in zip(self.layer, other.layer):
             self_layer.load_pretrained_weights(other_layer)
-    def forward(self, node_states, edge_indices: torch.Tensor):
+    def forward(self, node_states, edge_indices: torch.Tensor,
+                node_type_ids: Optional[torch.Tensor] = None):
+        if node_type_ids is None:
+            node_type_ids = torch.zeros(node_states.shape[:2], dtype=torch.int, device=node_states.device)
+
         for layer_module in self.layer:
-            node_states = layer_module(node_states, edge_indices)
+            node_states = layer_module(node_states, edge_indices, node_type_ids=node_type_ids)
         return node_states
 
 class GatbertEmbeddings(torch.nn.Module):
@@ -157,7 +170,8 @@ class GatbertModel(torch.nn.Module):
                 pooling_mask: torch.Tensor,
                 edge_indices: torch.Tensor,
                 position_ids: Optional[torch.Tensor] = None,
-                token_type_ids: Optional[torch.Tensor] = None):
+                token_type_ids: Optional[torch.Tensor] = None,
+                node_type_ids: Optional[torch.Tensor] = None):
         node_states = self.embeddings(input_ids, pooling_mask, position_ids=position_ids, token_type_ids=token_type_ids)
 
-        return self.encoder(node_states, edge_indices) #, edge_states.values())
+        return self.encoder(node_states, edge_indices, node_type_ids=node_type_ids) #, edge_states.values())

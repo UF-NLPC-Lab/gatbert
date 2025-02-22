@@ -8,7 +8,7 @@ from transformers.models.bert.modeling_bert import BertConfig
 # Local
 from .types import Transform
 from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
-from .constants import Stance
+from .constants import Stance, NodeType
 from .config import GatbertConfig
 from .encoder import *
 
@@ -229,10 +229,14 @@ class HybridClassifier(StanceClassifier):
             new_edges.sort()
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
 
+            node_type_ids = torch.tensor([NodeType.TOKEN.value] * num_text_nodes + [NodeType.KB.value] * num_kb_nodes, device=device)
+            node_type_ids = torch.unsqueeze(node_type_ids, 1)
+
             return {
                 "input_ids" : concat_ids,
                 "position_ids": position_ids,
                 "token_type_ids": token_type_ids,
+                "node_type_ids": node_type_ids,
                 "pooling_mask" : node_mask,
                 "edge_indices": new_edges,
                 "stance": torch.tensor(sample.stance.value, device=device)

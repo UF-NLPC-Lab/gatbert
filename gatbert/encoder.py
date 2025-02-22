@@ -155,6 +155,9 @@ def collate_graph_data(samples: List[TensorDict],
         'pooling_mask': batch_node_mask,
         'edge_indices': new_edge_indices
     }
+    if "node_type_ids" in rdict:
+        rdict['node_type_ids'] = torch.nn.utils.rnn.pad_sequence([torch.squeeze(s['node_type_ids'], 0) for s in samples],
+                                                       batch_first=True)
     if return_node_counts:
         rdict['node_counts'] = torch.tensor(node_counts, device=pooling_mask.device)
     return rdict

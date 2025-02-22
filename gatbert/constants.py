@@ -18,12 +18,10 @@ class Stance(enum.Enum):
     AGAINST = 1
     FAVOR = 2
 
-# TODO: Should I make 
 @enum.unique
 class NodeType(enum.Enum):
-    PADDING = 0
-    TOKEN = 1
-    KB = 2
+    TOKEN = 0
+    KB = 1
 
 ENCODED_FIELDS = {
     "stance",
