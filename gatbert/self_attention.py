@@ -150,6 +150,7 @@ class HeterogeneousSelfAttention(GatbertSelfAttention):
         self.value_edge = EdgeEmbeddings(config)
 
         self.__sqrt_attention_size = torch.sqrt(torch.tensor(self.attention_head_size))
+        self.__node_token_id = NodeType.TOKEN.value
 
     def load_pretrained_weights(self, other: BertSelfAttention):
         self.query.load_state_dict(other.query.state_dict())
@@ -157,7 +158,11 @@ class HeterogeneousSelfAttention(GatbertSelfAttention):
         self.value.load_state_dict(other.value.state_dict())
 
     def __dual_project(self, tok_proj, kb_proj, states, node_type_ids):
-        return (node_type_ids == NodeType.TOKEN) * tok_proj(states) + (node_type_ids != NodeType.TOKEN) * kb_proj(states)
+        mask_a = torch.unsqueeze(node_type_ids == self.__node_token_id, -1)
+        mask_b = torch.unsqueeze(node_type_ids != self.__node_token_id, -1)
+        op_a = mask_a * tok_proj(states)
+        op_b = mask_b * kb_proj(states)
+        return op_a + op_b
 
     def compute_attention_probs(self, node_states, edge_indices, node_type_ids):
         """
@@ -195,14 +200,14 @@ class HeterogeneousSelfAttention(GatbertSelfAttention):
         V_edge = self.value_edge(edge_indices, batch_size, n_nodes)
         # Edge embeddings coalesces parallel edges with different relations, so we have fewer edges indices now
         V_edge_indices = V_edge.indices() 
-        V_prod = V_node[V_edge_indices[0], V_edge_indices[2]] * V_edge.values()
+        V_sum = V_node[V_edge_indices[0], V_edge_indices[2]] + V_edge.values()
         # (total_edges, num_heads, att_head_size)
-        V_prod = self.transpose_for_scores(V_prod)
+        V_sum = self.transpose_for_scores(V_sum)
         values = torch.sparse_coo_tensor(
             indices=V_edge_indices,
-            values=V_prod,
+            values=V_sum,
             size=(batch_size, n_nodes, n_nodes, self.num_attention_heads, self.attention_head_size),
-            device=V_prod.device,
+            device=V_sum.device,
             is_coalesced=True,
             requires_grad=True
         )

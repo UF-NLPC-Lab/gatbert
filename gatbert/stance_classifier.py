@@ -230,7 +230,7 @@ class HybridClassifier(StanceClassifier):
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
 
             node_type_ids = torch.tensor([NodeType.TOKEN.value] * num_text_nodes + [NodeType.KB.value] * num_kb_nodes, device=device)
-            node_type_ids = torch.unsqueeze(node_type_ids, 1)
+            node_type_ids = torch.unsqueeze(node_type_ids, 0)
 
             return {
                 "input_ids" : concat_ids,
