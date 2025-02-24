@@ -78,17 +78,18 @@ class GraphSample:
             self.__seeded = False
 
         def add_seeds(self,
-                     target: List[Tuple[str, List[Any]]],
-                     context: List[Tuple[str, List[Any]]]):
+                     target: OrderedDict[str, List[Any]],
+                     context: OrderedDict[str, List[Any]]):
             """
             Add tokens and their matching seed concepts
             """
 
-            self.target = [pair[0] for pair in target]
-            self.context = [pair[0] for pair in context]
+            self.target = [key for key in target]
+            self.context = [key for key in context]
             n_text = len(self.target) + len(self.context)
 
-            node_lists = [pair[1] for pair in target + context]
+            flatten_values = lambda d: [seed_list for seed_list in d.values()]
+            node_lists = flatten_values(target) + flatten_values(context)
 
             for (text_ind, nodes) in enumerate(node_lists):
                 for node in nodes:

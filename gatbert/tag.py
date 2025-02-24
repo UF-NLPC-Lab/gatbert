@@ -7,13 +7,14 @@ import argparse
 import sys
 import csv
 from typing import List
+from collections import defaultdict, OrderedDict
+from itertools import islice
 # Local
-from .constants import DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
 from .graph_sample import GraphSample
 from .graph import CNGraph
 
-def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
+def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     """
     Args:
         sample:
@@ -22,41 +23,77 @@ def tag(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degre
             If a node's degree exceeds this size, don't explore its neighborhood
     """
 
-    builder = GraphSample.Builder(stance=sample.stance)
-
     frontier = set()
     def make_seed_dict(tokens: List[str]):
-        rval = []
+        rval = OrderedDict()
         for token in tokens:
             seeds = []
             kb_id = graph.tok2id.get(token.lower())
             if kb_id is not None:
                 frontier.add(kb_id)
                 seeds.append(kb_id)
-            rval.append((token, seeds))
+            rval[token] = seeds
         return rval
-    builder.add_seeds(
-        make_seed_dict(sample.target),
-        make_seed_dict(sample.context)
-    )
 
+    target_seed_dict = make_seed_dict(sample.target)
+    context_seed_dict = make_seed_dict(sample.context)
+
+    flatten = lambda sd: set(s for l in sd.values() for s in l)
+
+    target_seeds = flatten(target_seed_dict)
+    context_seeds = flatten(context_seed_dict)
+
+    def get_first_hops(seeds):
+        hop_dict = defaultdict(set)
+        for seed in seeds:
+            for (neighbor, _) in graph.adj.get(seed, []):
+                hop_dict[neighbor].add(seed)
+        return hop_dict
+
+    target_1_hop = get_first_hops(target_seeds)
+    target_2_hops = get_first_hops(target_1_hop)
+
+    context_1_hop = get_first_hops(context_seeds)
+    context_2_hops = get_first_hops(context_1_hop)
+
+    kept_forward = set()
+    for (head, predecessors) in filter(lambda p: p[0] in context_seeds, target_2_hops.items()):
+        kept_forward.add(head)
+        kept_forward.update(predecessors)
+    context_or_kept = kept_forward | context_seeds
+    for (head, predecessors) in filter(lambda p: p[0] in context_or_kept, target_1_hop.items()):
+        kept_forward.add(head)
+        kept_forward.update(predecessors)
+    kept_backward = set()
+    for (head, predecessors) in filter(lambda p: p[0] in target_seeds, context_2_hops.items()):
+        kept_backward.add(head)
+        kept_backward.update(predecessors)
+    target_or_kept = kept_backward | context_seeds
+    for (head, predecessors) in filter(lambda p: p[0] in target_or_kept, context_1_hop.items()):
+        kept_backward.add(head)
+        kept_backward.update(predecessors)
+
+    kept = kept_forward | kept_backward
+    def prune_seeds(seed_dict):
+        toks = list(seed_dict)
+        for tok in toks:
+            seed_dict[tok] = [s for s in seed_dict[tok] if s in kept]
+    prune_seeds(target_seed_dict)
+    prune_seeds(context_seed_dict)
+
+    builder = GraphSample.Builder(stance=sample.stance)
+    builder.add_seeds(target_seed_dict, context_seed_dict)
+
+    frontier = list(target_seed_dict.keys()) + list(context_seed_dict.keys())
     visited = set()
-    for _ in range(max_hops):
-        visited |= frontier
-        last_frontier = frontier
-        frontier = set()
-        for head_kb_id in last_frontier:
-            outgoing = graph.adj.get(head_kb_id, [])
-            if len(outgoing) <= max_degree:
-                for (tail_kb_id, relation_id) in outgoing:
-                    builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
-                    frontier.add(tail_kb_id)
-        frontier -= visited
-
-    for head_kb_id in frontier:
-        for (tail_kb_id, relation_id) in graph.adj[head_kb_id]:
-            if tail_kb_id in frontier:
-                builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
+    while frontier:
+        head = frontier.pop(0)
+        if head in visited:
+            continue
+        visited.add(head)
+        for (tail, relation) in filter(lambda pair: pair[0] in kept, graph.adj.get(head, [])):
+            builder.add_kb_edge(head, tail, relation)
+            frontier.append(tail)
 
     graph_sample = builder.build()
     # Replace all KB IDs with KB uris now
@@ -70,7 +107,7 @@ def main(raw_args=None):
     parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("--graph",    type=str, metavar="graph.json", help="File containing graph data written with .extract_cn")
-    parser.add_argument("--max-degree", type=int, metavar=DEFAULT_MAX_DEGREE, default=DEFAULT_MAX_DEGREE, help="If a node's degree exceeds this size, don't explore its neighborhood")
+    # parser.add_argument("--max-degree", type=int, metavar=DEFAULT_MAX_DEGREE, default=DEFAULT_MAX_DEGREE, help="If a node's degree exceeds this size, don't explore its neighborhood")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
     args = parser.parse_args(raw_args)
 
@@ -88,8 +125,9 @@ def main(raw_args=None):
         graph = CNGraph.from_json(json.load(r))
 
     sample_gen = map(get_default_pretokenize(), sample_gen)
-    sample_gen = map(lambda s: tag(s, graph, max_degree=args.max_degree), sample_gen)
+    sample_gen = map(lambda s: tag(s, graph), sample_gen)
     sample_gen = map(lambda s: s.to_row(), sample_gen)
+    sample_gen = islice(sample_gen, 4)
     with open(args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(sample_gen)
 
