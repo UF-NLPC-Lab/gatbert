@@ -15,6 +15,7 @@ from .constants import DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
 from .graph_sample import GraphSample
 from .graph import CNGraph
+from .utils import time_block
 
 def make_seed_dict(graph: CNGraph, tokens: List[str]):
     rval = []
@@ -88,36 +89,29 @@ def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     target_seeds -= common_seeds
     context_seeds -= common_seeds
 
-    def get_hops(seeds):
+    kept = set()
+    def get_two_hops(seeds, query_set):
         hop_dict = defaultdict(set)
+        frontier = []
         for seed in seeds:
+            assert seed not in query_set
             for (neighbor, _) in graph.adj.get(seed, []):
                 hop_dict[neighbor].add(seed)
-        return hop_dict
+                frontier.append(neighbor)
+                if neighbor in query_set:
+                    kept.add(neighbor)
+                    kept.add(seed)
+        for node in frontier:
+            for (neighbor, _) in graph.adj.get(node, []):
+                if neighbor in query_set:
+                    kept.add(neighbor)
+                    kept.add(node)
+                    kept.update(hop_dict[node])
+    get_two_hops(target_seeds, common_seeds | context_seeds)
+    get_two_hops(context_seeds, common_seeds | target_seeds)
+    get_two_hops(common_seeds,  target_seeds | context_seeds)
+    kept.update(common_seeds)
 
-    def trace_hops(required, source):
-        to_keep = set()
-        for (tail, predecessors) in filter(lambda p: p[0] in required, source.items()):
-            to_keep.add(tail)
-            to_keep.update(predecessors)
-        return to_keep
-
-    target_or_context = target_seeds | context_seeds
-    common_1_hop = get_hops(common_seeds)
-    common_2_hop = get_hops(common_1_hop)
-    kept_middle = trace_hops(target_or_context, common_2_hop) | trace_hops(target_or_context, common_1_hop)
-
-    context_or_common = context_seeds | common_seeds
-    target_1_hop = get_hops(target_seeds)
-    target_2_hops = get_hops(target_1_hop)
-    kept_forward = trace_hops(context_or_common, target_2_hops) | trace_hops(context_or_common, target_1_hop)
-
-    target_or_common = target_seeds | common_seeds
-    context_1_hop = get_hops(context_seeds)
-    context_2_hops = get_hops(context_1_hop)
-    kept_backward = trace_hops(target_or_common, context_2_hops) | trace_hops(target_or_common, context_1_hop)
-
-    kept = kept_forward | kept_backward | kept_middle | common_seeds
     def prune_seeds(seed_dict):
         for i in range(len(seed_dict)):
             seed_dict[i] = (seed_dict[i][0], [s for s in seed_dict[i][1] if s in kept])
