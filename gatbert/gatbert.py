@@ -105,6 +105,8 @@ class GatbertEmbeddings(torch.nn.Module):
         self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
+        self.hidden_size = config.hidden_size
+
     def load_pretrained_weights(self, other: BertEmbeddings):
         self.word_embeddings.load_state_dict(other.word_embeddings.state_dict())
         self.position_embeddings.load_state_dict(other.position_embeddings.state_dict())
@@ -147,7 +149,7 @@ class GatbertEmbeddings(torch.nn.Module):
 
         # (batch_size * max_nodes, batch_size * max_subnodes) @ (batch_size * max_subnodes, embedding)
         node_embeddings = torch.sparse.mm(expanded_mask, subnode_embeddings)
-        node_embeddings = node_embeddings.reshape(batch_size, max_nodes, -1)
+        node_embeddings = node_embeddings.reshape(batch_size, max_nodes, self.hidden_size)
 
         node_embeddings = self.layer_norm(node_embeddings)
         node_embeddings = self.dropout(node_embeddings)

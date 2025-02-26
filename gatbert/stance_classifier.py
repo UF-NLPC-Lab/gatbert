@@ -63,12 +63,16 @@ class ExternalClassifier(StanceClassifier):
             assert isinstance(sample, GraphSample)
             input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
             mask_indices, mask_values = build_average_pool_mask(pool_inds)
+            device = input_ids.device
 
             mask_indices = [(0, *index) for index in mask_indices] # Prepend batch dim
+            if mask_indices:
+                mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
+            else:
+                mask_indices = torch.empty([3, 0], dtype=torch.int, device=device)
 
-            device = input_ids.device
             node_mask = torch.sparse_coo_tensor(
-                indices=torch.tensor(mask_indices, device=device).transpose(1, 0),
+                indices=mask_indices,
                 values=torch.tensor(mask_values, device=device),
                 size=(1, len(sample.kb), input_ids.shape[-1]),
                 is_coalesced=True,
