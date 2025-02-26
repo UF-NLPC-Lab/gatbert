@@ -6,21 +6,72 @@ import json
 import argparse
 import sys
 import csv
-from typing import List
+from typing import List, Callable
 from collections import defaultdict, OrderedDict
-from itertools import islice
 # Local
+from .constants import DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
 from .graph_sample import GraphSample
 from .graph import CNGraph
 
-def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
+def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
     """
-    Args:
-        sample:
-        max_hops:
-        max_degree:
-            If a node's degree exceeds this size, don't explore its neighborhood
+    Just take the seed concepts that match tokens in the sample,
+    and nodes that neighbor those seeds.
+
+    If a node's out-degree is >= max_degree, we don't explore its neighborhood
+    (still keep the node itself though).
+    """
+
+    builder = GraphSample.Builder(stance=sample.stance)
+
+    frontier = set()
+    def make_seed_dict(tokens: List[str]):
+        rval = OrderedDict()
+        for token in tokens:
+            seeds = []
+            kb_id = graph.tok2id.get(token.lower())
+            if kb_id is not None:
+                frontier.add(kb_id)
+                seeds.append(kb_id)
+            rval[token] = seeds
+        return rval
+    builder.add_seeds(
+        make_seed_dict(sample.target),
+        make_seed_dict(sample.context)
+    )
+
+    visited = set()
+    for _ in range(max_hops):
+        visited |= frontier
+        last_frontier = frontier
+        frontier = set()
+        for head_kb_id in last_frontier:
+            outgoing = graph.adj.get(head_kb_id, [])
+            if len(outgoing) <= max_degree:
+                for (tail_kb_id, relation_id) in outgoing:
+                    builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
+                    frontier.add(tail_kb_id)
+        frontier -= visited
+
+    for head_kb_id in frontier:
+        for (tail_kb_id, relation_id) in graph.adj[head_kb_id]:
+            if tail_kb_id in frontier:
+                builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
+
+    graph_sample = builder.build()
+    # Replace all KB IDs with KB uris now
+    for i in range(len(graph_sample.kb)):
+        graph_sample.kb[i] = graph.id2uri[graph_sample.kb[i]]
+    return graph_sample
+
+def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
+    """
+    Sample for CN nodes that act as "bridges" between target tokens and context tokens.
+
+    See https://aclanthology.org/2021.findings-acl.278/ for reference.
+    We extract seed concepts for both the target and context, and explore one hop beyond those.
+    We only keep nodes that are part of a 0-, 1-, or 2-hop path between target seeds and context seeds.
     """
 
     def make_seed_dict(tokens: List[str]):
@@ -102,12 +153,22 @@ def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     return graph_sample
 
 def main(raw_args=None):
+
+    def get_tag_func(name) -> Callable[[PretokenizedSample, CNGraph], GraphSample]:
+        if name == "bridge":
+            return bridge_sample
+        elif name == "naive":
+            return naive_sample
+        else:
+            raise ValueError(f"Invalid --sample {name}")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ezstance", type=str, metavar="input.csv", help="File containing stance data from the EZStance dataset")
     parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("--graph",    type=str, metavar="graph.json", help="File containing graph data written with .extract_cn")
-    # parser.add_argument("--max-degree", type=int, metavar=DEFAULT_MAX_DEGREE, default=DEFAULT_MAX_DEGREE, help="If a node's degree exceeds this size, don't explore its neighborhood")
+
+    parser.add_argument("--sample", type=get_tag_func, default=bridge_sample, metavar="bridge|naive", help="How to sample nodes from the CN graph")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
     args = parser.parse_args(raw_args)
 
@@ -123,9 +184,10 @@ def main(raw_args=None):
 
     with open(args.graph, 'r', encoding='utf-8') as r:
         graph = CNGraph.from_json(json.load(r))
+    tag_func = args.sample
 
     sample_gen = map(get_default_pretokenize(), sample_gen)
-    sample_gen = map(lambda s: tag(s, graph), sample_gen)
+    sample_gen = map(lambda s: tag_func(s, graph), sample_gen)
     sample_gen = map(lambda s: s.to_row(), sample_gen)
     with open(args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(sample_gen)
