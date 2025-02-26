@@ -9,6 +9,7 @@ import csv
 from typing import List, Callable
 from collections import defaultdict
 from itertools import islice
+from tqdm import tqdm
 # Local
 from .constants import DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
@@ -177,11 +178,12 @@ def main(raw_args=None):
         graph = CNGraph.from_json(json.load(r))
     tag_func = args.sample
 
-    sample_gen = map(get_default_pretokenize(), sample_gen)
-    sample_gen = map(lambda s: tag_func(s, graph), sample_gen)
-    sample_gen = map(lambda s: s.to_row(), sample_gen)
+    samples = list(map(get_default_pretokenize(), sample_gen))
+    processed = []
+    for sample in tqdm(samples):
+        processed.append(tag_func(sample, graph).to_row())
     with open(args.o, 'w', encoding='utf-8') as w:
-        csv.writer(w, delimiter='\t').writerows(sample_gen)
+        csv.writer(w, delimiter='\t').writerows(processed)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
