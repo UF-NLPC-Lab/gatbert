@@ -56,22 +56,30 @@ def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     context_1_hop = get_first_hops(context_seeds)
     context_2_hops = get_first_hops(context_1_hop)
 
+    def add_to(s, el):
+        s.add(el)
+
     kept_forward = set()
     for (head, predecessors) in filter(lambda p: p[0] in context_seeds, target_2_hops.items()):
-        kept_forward.add(head)
-        kept_forward.update(predecessors)
+        add_to(kept_forward, head)
+        for p in predecessors:
+            add_to(kept_forward, p)
     context_or_kept = kept_forward | context_seeds
     for (head, predecessors) in filter(lambda p: p[0] in context_or_kept, target_1_hop.items()):
-        kept_forward.add(head)
-        kept_forward.update(predecessors)
+        add_to(kept_forward, head)
+        for p in predecessors:
+            add_to(kept_forward, p)
+
     kept_backward = set()
     for (head, predecessors) in filter(lambda p: p[0] in target_seeds, context_2_hops.items()):
-        kept_backward.add(head)
-        kept_backward.update(predecessors)
-    target_or_kept = kept_backward | context_seeds
+        add_to(kept_backward, head)
+        for p in predecessors:
+            add_to(kept_backward, p)
+    target_or_kept = kept_backward | target_seeds
     for (head, predecessors) in filter(lambda p: p[0] in target_or_kept, context_1_hop.items()):
-        kept_backward.add(head)
-        kept_backward.update(predecessors)
+        add_to(kept_backward, head)
+        for p in predecessors:
+            add_to(kept_backward, p)
 
     kept = kept_forward | kept_backward
     def prune_seeds(seed_dict):
@@ -84,7 +92,8 @@ def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     builder = GraphSample.Builder(stance=sample.stance)
     builder.add_seeds(target_seed_dict, context_seed_dict)
 
-    frontier = list(target_seed_dict.keys()) + list(context_seed_dict.keys())
+    flatten_lists = lambda seed_dict: [v for vlist in seed_dict.values() for v in vlist]
+    frontier = flatten_lists(target_seed_dict) + flatten_lists(context_seed_dict)
     visited = set()
     while frontier:
         head = frontier.pop(0)
