@@ -11,4 +11,8 @@ lightning_logs/
 !environment.yaml
 !sample_configs/*.yaml
 
+*csv
+*tsv
+
+# Graphviz files
 *gv*

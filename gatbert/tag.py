@@ -7,12 +7,23 @@ import argparse
 import sys
 import csv
 from typing import List, Callable
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
+from itertools import islice
 # Local
 from .constants import DEFAULT_MAX_DEGREE
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
 from .graph_sample import GraphSample
 from .graph import CNGraph
+
+def make_seed_dict(graph: CNGraph, tokens: List[str]):
+    rval = []
+    for token in tokens:
+        seeds = []
+        kb_id = graph.tok2id.get(token.lower())
+        if kb_id is not None:
+            seeds.append(kb_id)
+        rval.append((token, seeds))
+    return rval
 
 def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
     """
@@ -25,22 +36,14 @@ def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, 
 
     builder = GraphSample.Builder(stance=sample.stance)
 
-    frontier = set()
-    def make_seed_dict(tokens: List[str]):
-        rval = OrderedDict()
-        for token in tokens:
-            seeds = []
-            kb_id = graph.tok2id.get(token.lower())
-            if kb_id is not None:
-                frontier.add(kb_id)
-                seeds.append(kb_id)
-            rval[token] = seeds
-        return rval
+    target_seeds = make_seed_dict(graph, sample.target)
+    context_seeds = make_seed_dict(graph, sample.context)
     builder.add_seeds(
-        make_seed_dict(sample.target),
-        make_seed_dict(sample.context)
+        target_seeds,
+        context_seeds
     )
 
+    frontier = {node for (_, node_list) in target_seeds + context_seeds for node in node_list}
     visited = set()
     for _ in range(max_hops):
         visited |= frontier
@@ -74,20 +77,10 @@ def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     We only keep nodes that are part of a 0-, 1-, or 2-hop path between target seeds and context seeds.
     """
 
-    def make_seed_dict(tokens: List[str]):
-        rval = OrderedDict()
-        for token in tokens:
-            seeds = []
-            kb_id = graph.tok2id.get(token.lower())
-            if kb_id is not None:
-                seeds.append(kb_id)
-            rval[token] = seeds
-        return rval
-    target_seed_dict = make_seed_dict(sample.target)
-    context_seed_dict = make_seed_dict(sample.context)
+    target_seed_dict = make_seed_dict(graph, sample.target)
+    context_seed_dict = make_seed_dict(graph, sample.context)
 
-    flatten = lambda sd: set(s for l in sd.values() for s in l)
-
+    flatten = lambda sd: set(node for (_, node_list) in sd for node in node_list)
     target_seeds = flatten(target_seed_dict)
     context_seeds = flatten(context_seed_dict)
     common_seeds = target_seeds & context_seeds
@@ -125,17 +118,15 @@ def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
 
     kept = kept_forward | kept_backward | kept_middle | common_seeds
     def prune_seeds(seed_dict):
-        toks = list(seed_dict)
-        for tok in toks:
-            seed_dict[tok] = [s for s in seed_dict[tok] if s in kept]
+        for i in range(len(seed_dict)):
+            seed_dict[i] = (seed_dict[i][0], [s for s in seed_dict[i][1] if s in kept])
     prune_seeds(target_seed_dict)
     prune_seeds(context_seed_dict)
 
     builder = GraphSample.Builder(stance=sample.stance)
     builder.add_seeds(target_seed_dict, context_seed_dict)
 
-    flatten_lists = lambda seed_dict: [v for vlist in seed_dict.values() for v in vlist]
-    frontier = flatten_lists(target_seed_dict) + flatten_lists(context_seed_dict)
+    frontier = list(kept)
     visited = set()
     while frontier:
         head = frontier.pop(0)
