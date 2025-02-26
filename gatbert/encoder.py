@@ -80,7 +80,7 @@ def encode_kb_nodes(tokenizer: PreTrainedTokenizerFast, kb: List[str], max_nodes
     subword_index = -1 # Has to be at least defined in case we skip the loop
     # For KB subwords, we plan to pool each into one combined node
     n_kb_nodes = 0
-    for (subword_index, (start, end)) in enumerate(tokenized_kb['offset_mapping'].squeeze()):
+    for (subword_index, (start, end)) in enumerate(tokenized_kb['offset_mapping'].squeeze(dim=0)):
         if start == 0:
             assert end != 0, "Special tokens should have been scrubbed"
             if n_kb_nodes >= max_nodes:
