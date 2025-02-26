@@ -11,6 +11,9 @@ class CNGraph:
     id2uri: Dict[int, str]
     adj: Dict[int, List[Tuple[int, int]]]
 
+    def __repr__(self):
+        return "<CNGraph>"
+
     @staticmethod
     def from_json(json_data: Dict[str, Any]):
         return CNGraph(

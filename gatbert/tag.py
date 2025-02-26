@@ -23,18 +23,15 @@ def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
             If a node's degree exceeds this size, don't explore its neighborhood
     """
 
-    frontier = set()
     def make_seed_dict(tokens: List[str]):
         rval = OrderedDict()
         for token in tokens:
             seeds = []
             kb_id = graph.tok2id.get(token.lower())
             if kb_id is not None:
-                frontier.add(kb_id)
                 seeds.append(kb_id)
             rval[token] = seeds
         return rval
-
     target_seed_dict = make_seed_dict(sample.target)
     context_seed_dict = make_seed_dict(sample.context)
 
@@ -42,46 +39,40 @@ def tag(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
 
     target_seeds = flatten(target_seed_dict)
     context_seeds = flatten(context_seed_dict)
+    common_seeds = target_seeds & context_seeds
+    target_seeds -= common_seeds
+    context_seeds -= common_seeds
 
-    def get_first_hops(seeds):
+    def get_hops(seeds):
         hop_dict = defaultdict(set)
         for seed in seeds:
             for (neighbor, _) in graph.adj.get(seed, []):
                 hop_dict[neighbor].add(seed)
         return hop_dict
 
-    target_1_hop = get_first_hops(target_seeds)
-    target_2_hops = get_first_hops(target_1_hop)
+    def trace_hops(required, source):
+        to_keep = set()
+        for (tail, predecessors) in filter(lambda p: p[0] in required, source.items()):
+            to_keep.add(tail)
+            to_keep.update(predecessors)
+        return to_keep
 
-    context_1_hop = get_first_hops(context_seeds)
-    context_2_hops = get_first_hops(context_1_hop)
+    target_or_context = target_seeds | context_seeds
+    common_1_hop = get_hops(common_seeds)
+    common_2_hop = get_hops(common_1_hop)
+    kept_middle = trace_hops(target_or_context, common_2_hop) | trace_hops(target_or_context, common_1_hop)
 
-    def add_to(s, el):
-        s.add(el)
+    context_or_common = context_seeds | common_seeds
+    target_1_hop = get_hops(target_seeds)
+    target_2_hops = get_hops(target_1_hop)
+    kept_forward = trace_hops(context_or_common, target_2_hops) | trace_hops(context_or_common, target_1_hop)
 
-    kept_forward = set()
-    for (head, predecessors) in filter(lambda p: p[0] in context_seeds, target_2_hops.items()):
-        add_to(kept_forward, head)
-        for p in predecessors:
-            add_to(kept_forward, p)
-    context_or_kept = kept_forward | context_seeds
-    for (head, predecessors) in filter(lambda p: p[0] in context_or_kept, target_1_hop.items()):
-        add_to(kept_forward, head)
-        for p in predecessors:
-            add_to(kept_forward, p)
+    target_or_common = target_seeds | common_seeds
+    context_1_hop = get_hops(context_seeds)
+    context_2_hops = get_hops(context_1_hop)
+    kept_backward = trace_hops(target_or_common, context_2_hops) | trace_hops(target_or_common, context_1_hop)
 
-    kept_backward = set()
-    for (head, predecessors) in filter(lambda p: p[0] in target_seeds, context_2_hops.items()):
-        add_to(kept_backward, head)
-        for p in predecessors:
-            add_to(kept_backward, p)
-    target_or_kept = kept_backward | target_seeds
-    for (head, predecessors) in filter(lambda p: p[0] in target_or_kept, context_1_hop.items()):
-        add_to(kept_backward, head)
-        for p in predecessors:
-            add_to(kept_backward, p)
-
-    kept = kept_forward | kept_backward
+    kept = kept_forward | kept_backward | kept_middle | common_seeds
     def prune_seeds(seed_dict):
         toks = list(seed_dict)
         for tok in toks:
@@ -136,7 +127,6 @@ def main(raw_args=None):
     sample_gen = map(get_default_pretokenize(), sample_gen)
     sample_gen = map(lambda s: tag(s, graph), sample_gen)
     sample_gen = map(lambda s: s.to_row(), sample_gen)
-    sample_gen = islice(sample_gen, 4)
     with open(args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(sample_gen)
 
