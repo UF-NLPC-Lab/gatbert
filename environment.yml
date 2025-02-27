@@ -13,6 +13,7 @@ dependencies:
   - transformers
   - lightning
   - psycopg2
-  - graphviz
+  - python-graphviz
   - pip:
+    - pykeen[transformers]
     - jsonargparse[signatures]
