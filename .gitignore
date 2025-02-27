@@ -11,6 +11,8 @@ lightning_logs/
 !environment.yaml
 !sample_configs/*.yaml
 
+*pth
+*gz
 *csv
 *tsv
 
