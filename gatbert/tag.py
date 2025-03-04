@@ -152,7 +152,7 @@ def main(raw_args=None):
     parser.add_argument("--ezstance", type=str, metavar="input.csv", help="File containing stance data from the EZStance dataset")
     parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
-    parser.add_argument("--graph",    type=str, metavar="graph.json", help="File containing graph data written with .extract_cn")
+    parser.add_argument("--graph",    type=str, metavar="graph.json|pykeen_outdir/", help="File containing graph data written with .extract_cn")
 
     parser.add_argument("--sample", type=get_tag_func, default=bridge_sample, metavar="bridge|naive", help="How to sample nodes from the CN graph")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
@@ -168,8 +168,7 @@ def main(raw_args=None):
     else:
         raise RuntimeError("--semeval not yet supported")
 
-    with open(args.graph, 'r', encoding='utf-8') as r:
-        graph = CNGraph.from_json(json.load(r))
+    graph = CNGraph.read(args.graph)
     tag_func = args.sample
 
     samples = list(map(get_default_pretokenize(), sample_gen))
