@@ -18,13 +18,14 @@ class StanceDataModule(L.LightningDataModule):
                  classifier: type[StanceClassifier] = TextClassifier,
                  batch_size: int = DEFAULT_BATCH_SIZE,
                  tokenizer: str = DEFAULT_MODEL,
-                 transforms: Optional[List[Transform]] = None
+                 transforms: Optional[List[Transform]] = None,
+                 graph: Optional[str] = None
                 ):
         super().__init__()
         self.save_hyperparameters()
 
         tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
-        encoder = classifier.get_encoder(tokenizer_model, transforms)
+        encoder = classifier.get_encoder(tokenizer_model, transforms, graph)
         # Protected variables
         self._preprocessor = Preprocessor(
             self.hparams.corpus_type, encoder, transforms
@@ -70,23 +71,3 @@ class RandomSplitDataModule(StanceDataModule):
         for data_path in self.hparams.partitions:
             self.__data[data_path] = MapDataset(self._preprocessor.parse_file(data_path))
 
-    def setup(self, stage):
-        train_dses = []
-        val_dses = []
-        test_dses = []
-        for (data_prefix, (train_frac, val_frac, test_frac)) in self.hparams.partitions.items():
-            train_ds, val_ds, test_ds = \
-                random_split(self.__data[data_prefix], [train_frac, val_frac, test_frac])
-            train_dses.append(train_ds)
-            val_dses.append(val_ds)
-            test_dses.append(test_ds)
-        self.__train_ds = ConcatDataset(train_dses)
-        self.__val_ds = ConcatDataset(val_dses)
-        self.__test_ds = ConcatDataset(test_dses)
-
-    def train_dataloader(self):
-        return self._make_train_loader(self.__train_ds)
-    def val_dataloader(self):
-        return self._make_val_loader(self.__val_ds)
-    def test_dataloader(self):
-        return self._make_test_loader(self.__test_ds)

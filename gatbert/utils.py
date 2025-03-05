@@ -4,6 +4,11 @@ from typing import List, Any
 import time
 from contextlib import contextmanager
 
+def map_func_gen(f, func):
+    def mapped(*args, **kwargs):
+        return map(f, func(*args, **kwargs))
+    return mapped
+
 def flat_map(f, iterable) -> List[Any]:
     return reduce(lambda a,b: a + b, map(f, iterable), [])
 

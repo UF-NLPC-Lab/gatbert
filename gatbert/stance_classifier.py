@@ -1,9 +1,10 @@
 import abc
 import inspect
 from typing import List, Optional
+import os
 # 3rd Party
 import torch
-from transformers import BertModel, PreTrainedTokenizerFast
+from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, AutoConfig
 from transformers.models.bert.modeling_bert import BertConfig
 # Local
 from .types import Transform
@@ -11,36 +12,45 @@ from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
 from .constants import Stance, NodeType
 from .config import GatbertConfig
 from .encoder import *
+from .graph import *
 
 class StanceClassifier(torch.nn.Module):
-    def __init__(self, config: GatbertConfig):
-        super().__init__()
-        self.config = config
-        pass
-
     @abc.abstractmethod
     def load_pretrained_weights(self):
         pass
 
-    @classmethod
-    def get_encoder(cls, tokenizer: PreTrainedTokenizerFast, transforms: Optional[List[Transform]] = None) -> Encoder:
-        # Because I didn't feel like adding a second argument to these other classes
-        constructor = cls.Encoder
-        params = inspect.signature(constructor).parameters
-        kwargs = {}
-        if "transforms" in params:
-            kwargs['transforms'] = transforms
-        return constructor(tokenizer, **kwargs)
+    @abc.abstractmethod
+    def encode(self, sample) -> TensorDict:
+        pass
+
+    @abc.abstractmethod
+    def collate(self, samples: List[TensorDict]) -> TensorDict:
+        pass
+
 
 class ExternalClassifier(StanceClassifier):
     """
     Produces a hidden state summarizing just a graph (no text)
     """
-    def __init__(self, config: GatbertConfig):
-        super().__init__(config)
-        self.concept_embeddings = GatbertEmbeddings(config)
-        self.gat = GatbertEncoder(config)
-        self.linear = torch.nn.Linear(config.hidden_size, len(Stance), bias=False)
+    def __init__(self,
+                 pretrained_model: str,
+                 graph: os.PathLike,
+                 num_layers: int = 2):
+        super().__init__()
+
+        rel_mapping = get_relation_mapping(graph)
+        self.config = GatbertConfig(
+            BertConfig.from_pretrained(pretrained_model),
+            n_relations=len(rel_mapping),
+            num_layers=num_layers,
+            base_model=pretrained_model
+        )
+        self.graph = CNGraph.read(graph)
+        self.concept_embeddings = GatbertEmbeddings(self.config)
+        self.gat = GatbertEncoder(self.config)
+        self.linear = torch.nn.Linear(self.config.hidden_size, len(Stance), bias=False)
+
+        self.__tokenizer = BertTokenizerFast.from_pretrained(pretrained_model)
 
     def load_pretrained_weights(self):
         self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).embeddings)
@@ -55,54 +65,50 @@ class ExternalClassifier(StanceClassifier):
         logits = self.linear(avg_graph_hidden_states)
         return logits
 
-    class Encoder(Encoder):
-        def __init__(self, tokenizer: PreTrainedTokenizerFast):
-            self.__tokenizer = tokenizer
+    def encode(self, sample: GraphSample) -> TensorDict:
+        assert isinstance(sample, GraphSample)
+        input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
+        mask_indices, mask_values = build_average_pool_mask(pool_inds)
+        device = input_ids.device
 
-        def encode(self, sample: GraphSample) -> TensorDict:
-            assert isinstance(sample, GraphSample)
-            input_ids, pool_inds = encode_kb_nodes(self.__tokenizer, sample.kb)
-            mask_indices, mask_values = build_average_pool_mask(pool_inds)
-            device = input_ids.device
+        mask_indices = [(0, *index) for index in mask_indices] # Prepend batch dim
+        if mask_indices:
+            mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
+        else:
+            mask_indices = torch.empty([3, 0], dtype=torch.int, device=device)
 
-            mask_indices = [(0, *index) for index in mask_indices] # Prepend batch dim
-            if mask_indices:
-                mask_indices = torch.tensor(mask_indices, device=device).transpose(1, 0)
-            else:
-                mask_indices = torch.empty([3, 0], dtype=torch.int, device=device)
+        node_mask = torch.sparse_coo_tensor(
+            indices=mask_indices,
+            values=torch.tensor(mask_values, device=device),
+            size=(1, len(sample.kb), input_ids.shape[-1]),
+            is_coalesced=True,
+            requires_grad=True,
+            dtype=torch.float,
+            device=device
+        )
 
-            node_mask = torch.sparse_coo_tensor(
-                indices=mask_indices,
-                values=torch.tensor(mask_values, device=device),
-                size=(1, len(sample.kb), input_ids.shape[-1]),
-                is_coalesced=True,
-                requires_grad=True,
-                dtype=torch.float,
-                device=device
-            )
+        orig_text_nodes = len(sample.target) + len(sample.context)
+        # Only keep edges between two graph concepts
+        iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
+        iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
+        edge_indices = sorted(iter_edge)
+        if edge_indices:
+            edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
+        else:
+            edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
+        return {
+            "input_ids" : input_ids,
+            "pooling_mask" : node_mask,
+            "edge_indices": edge_indices,
+            "stance": torch.tensor(sample.stance.value, device=device)
+        }
 
-            orig_text_nodes = len(sample.target) + len(sample.context)
-            # Only keep edges between two graph concepts
-            iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
-            iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
-            edge_indices = sorted(iter_edge)
-            if edge_indices:
-                edge_indices = torch.tensor(edge_indices, device=device).transpose(1, 0)
-            else:
-                edge_indices = torch.empty([4, 0], dtype=torch.int, device=device)
-            return {
-                "input_ids" : input_ids,
-                "pooling_mask" : node_mask,
-                "edge_indices": edge_indices,
-                "stance": torch.tensor(sample.stance.value, device=device)
-            }
-
-        def collate(self, samples: List[TensorDict]) -> TensorDict:
-            return {
-                **collate_ids(self.__tokenizer, samples),
-                **collate_graph_data(samples, return_node_counts=True),
-                'stance': torch.stack([s['stance'] for s in samples])
-            }
+    def collate(self, samples: List[TensorDict]) -> TensorDict:
+        return {
+            **collate_ids(self.__tokenizer, samples),
+            **collate_graph_data(samples, return_node_counts=True),
+            'stance': torch.stack([s['stance'] for s in samples])
+        }
 
 
 class HybridClassifier(StanceClassifier):

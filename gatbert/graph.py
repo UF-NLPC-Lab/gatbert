@@ -1,6 +1,8 @@
 # STL
 import os
 import json
+import gzip
+import csv
 from typing import List, Tuple, Dict, Any
 from collections import defaultdict
 import dataclasses
@@ -19,6 +21,17 @@ def get_relation_embeddings(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'relations.pkl')
 def get_triples(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'numeric_triples.tsv.gz')
+
+def get_relation_mapping(graph_root: os.PathLike) -> Dict[str, int]:
+    rdict = {}
+    with gzip.open(os.path.join(graph_root, "relation_to_id.tsv.gz"), 'r') as r:
+        reader = csv.DictReader(r)
+        for row in reader:
+            label = row['label']
+            forward_id = int(row['id'])
+            rdict[label] = forward_id
+            rdict[f'{label}/inv'] = forward_id + 1
+    return rdict
 
 @dataclasses.dataclass
 class CNGraph:

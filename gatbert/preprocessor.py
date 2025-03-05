@@ -7,11 +7,6 @@ from .graph_sample import GraphSample
 from .types import CorpusType, TensorDict, Transform
 from .encoder import Encoder
 
-def map_func_gen(f, func):
-    def mapped(*args, **kwargs):
-        return map(f, func(*args, **kwargs))
-    return mapped
-
 class Preprocessor:
     def __init__(self,
                  corpus_type: CorpusType,

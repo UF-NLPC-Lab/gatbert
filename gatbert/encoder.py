@@ -1,5 +1,5 @@
 # STL
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Iterable
 import abc
 from collections import defaultdict, OrderedDict
 import logging
@@ -118,6 +118,13 @@ def collate_ids(tokenizer: PreTrainedTokenizerFast,
 
 def collate_stance(samples: List[TensorDict]) -> TensorDict:
     return {'stance': torch.stack([s['stance'] for s in samples], dim=0)}
+
+def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:
+    batched = []
+    for (i, s) in enumerate(samples):
+        s[0, :] = i
+        batched.append(s)
+    return torch.concatenate(batched, dim=-1)
 
 def collate_graph_data(samples: List[TensorDict],
                        return_node_counts: bool = False) -> TensorDict:

@@ -9,6 +9,8 @@ import torch
 from pykeen.datasets import ConceptNet
 from pykeen.pipeline import pipeline
 from pykeen.models import TransE
+# Local
+from .graph import get_entity_embeddings, get_relation_embeddings
 
 def extract_transe(model: TransE) -> Tuple[torch.nn.Embedding, torch.nn.Embedding]:
     return model.entity_representations[0]._embeddings, model.relation_representations[0]._embeddings
@@ -45,8 +47,8 @@ def main(raw_args):
             lr_scheduler_kwargs=dict(gamma=0.99)
         )
         entity_embeddings, relation_embeddings = extract_embeddings(pipeline_res.model)
-        torch.save(entity_embeddings, out_path.joinpath("entities.pkl"))
-        torch.save(relation_embeddings, out_path.joinpath("relations.pkl"))
+        torch.save(entity_embeddings, get_entity_embeddings(out_path))
+        torch.save(relation_embeddings, get_relation_embeddings(out_path))
 
     concat_tripples = torch.concatenate([
         ds.training.mapped_triples,
