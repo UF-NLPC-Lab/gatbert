@@ -8,15 +8,35 @@ import pathlib
 # 3rd Party
 import pandas as pd
 # Local
+from .constants import CN_URI_PATT
 
 EdgeList = List[Tuple[int, int, int]]
 NodeList = List[int]
 
+def get_entity_embeddings(graph_root: os.PathLike) -> os.PathLike:
+    return os.path.join(graph_root, 'entities.pkl')
+def get_relation_embeddings(graph_root: os.PathLike) -> os.PathLike:
+    return os.path.join(graph_root, 'relations.pkl')
+def get_triples(graph_root: os.PathLike) -> os.PathLike:
+    return os.path.join(graph_root, 'numeric_triples.tsv.gz')
+
 @dataclasses.dataclass
 class CNGraph:
-    tok2id: Dict[str, int]
+    uri2id: Dict[str, int]
     id2uri: Dict[int, str]
+    tok2id: Dict[str, int]
     adj: Dict[int, List[Tuple[int, int]]]
+
+    def __init__(self, uri2id, id2uri, adj):
+        self.uri2id = uri2id
+        self.id2uri = id2uri
+        self.adj = adj
+
+        matches = map(lambda pair: (CN_URI_PATT.fullmatch(pair[0]), pair[1]), self.uri2id.items())
+        matches = filter(lambda pair: pair[0], matches)
+        self.tok2id = {match.group(1):id for (match, id) in matches}
+        pass
+
 
     def __repr__(self):
         return "<CNGraph>"
@@ -34,9 +54,9 @@ class CNGraph:
         # relation_df = pd.read_csv(pykeen_dir.join('relation_to_id.tsv.gz'), compression='gzip', delimiter='\t')
 
         entity_df   = pd.read_csv(pykeen_dir.joinpath('entity_to_id.tsv.gz'), compression='gzip', delimiter='\t')
-        raw_toks = entity_df.label.apply(lambda l: l.split('/')[3])
+        raw_uris = entity_df.label
         raw_ids = entity_df.id.apply(int)
-        tok2id = dict(zip(raw_toks, raw_ids))
+        uri2id = dict(zip(raw_uris, raw_ids))
         id2uri = dict(zip(raw_ids, entity_df.label))
 
         del entity_df
@@ -51,15 +71,14 @@ class CNGraph:
             adj[head].append((tail, rel))
             adj[tail].append((head, inv_rel))
         return CNGraph(
-            tok2id=tok2id,
+            uri2id=uri2id,
             id2uri=id2uri,
             adj=adj
         )
 
     @staticmethod
     def from_json(json_data: Dict[str, Any]):
-        return CNGraph(
-            tok2id=json_data['tok2id'],
-            id2uri={int(k):v for k,v in json_data['id2uri'].items()},
-            adj   ={int(k):v for k,v in json_data['adj'].items()}
-        )
+        id2uri = {int(k):v for k,v in json_data['id2uri'].items()}
+        uri2id =  {v:k for k,v in id2uri.items()}
+        adj = {int(k):v for k,v in json_data['adj'].items()}
+        return CNGraph(uri2id=uri2id, id2uri=id2uri, adj=adj)
