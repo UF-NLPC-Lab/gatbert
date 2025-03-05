@@ -6,38 +6,57 @@ from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, Tuple, Optional, List
-from .data import MapDataset
+from .data import MapDataset, parse_ez_stance, parse_graph_tsv, parse_semeval, parse_vast
+from .encoder import Encoder
 from .preprocessor import Preprocessor
 from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
 from .stance_classifier import *
 from .types import CorpusType, Transform
+from .utils import map_func_gen
+
+def rm_external(s: GraphSample) -> GraphSample:
+    assert isinstance(s, GraphSample)
+    return s.strip_external()
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 classifier: type[StanceClassifier] = TextClassifier,
+                 classifier: StanceClassifier,
                  batch_size: int = DEFAULT_BATCH_SIZE,
-                 tokenizer: str = DEFAULT_MODEL,
-                 transforms: Optional[List[Transform]] = None,
-                 graph: Optional[str] = None
+                 transforms: Optional[List[Transform]] = None
                 ):
         super().__init__()
         self.save_hyperparameters()
 
-        tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
-        encoder = classifier.get_encoder(tokenizer_model, transforms, graph)
+        if corpus_type == 'graph':
+            parse_fn = parse_graph_tsv
+        elif corpus_type == 'ezstance':
+            parse_fn = parse_ez_stance
+        elif corpus_type == 'semeval':
+            parse_fn = parse_semeval
+        elif corpus_type == 'vast':
+            parse_fn = parse_vast
+        else:
+            raise ValueError(f"Invalid corpus_type {corpus_type}")
+        if transforms:
+            transform_map = {
+                'rm_external': rm_external
+            }
+            for t in transforms:
+                if t in transform_map:
+                    parse_fn = map_func_gen(transform_map[t], parse_fn)
+
         # Protected variables
-        self._preprocessor = Preprocessor(
-            self.hparams.corpus_type, encoder, transforms
-        )
+        self._encoder = classifier.get_encoder()
+        self._parse_fn = map_func_gen(self.__encoder.encode, parse_fn)
 
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._encoder.collate)
     def _make_val_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._encoder.collate)
     def _make_test_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._encoder.collate)
 
 
 class RandomSplitDataModule(StanceDataModule):
@@ -69,5 +88,25 @@ class RandomSplitDataModule(StanceDataModule):
 
     def prepare_data(self):
         for data_path in self.hparams.partitions:
-            self.__data[data_path] = MapDataset(self._preprocessor.parse_file(data_path))
+            self.__data[data_path] = MapDataset(self._parse_fn(data_path))
 
+    def setup(self, stage):
+        train_dses = []
+        val_dses = []
+        test_dses = []
+        for (data_prefix, (train_frac, val_frac, test_frac)) in self.hparams.partitions.items():
+            train_ds, val_ds, test_ds = \
+                random_split(self.__data[data_prefix], [train_frac, val_frac, test_frac])
+            train_dses.append(train_ds)
+            val_dses.append(val_ds)
+            test_dses.append(test_ds)
+        self.__train_ds = ConcatDataset(train_dses)
+        self.__val_ds = ConcatDataset(val_dses)
+        self.__test_ds = ConcatDataset(test_dses)
+
+    def train_dataloader(self):
+        return self._make_train_loader(self.__train_ds)
+    def val_dataloader(self):
+        return self._make_val_loader(self.__val_ds)
+    def test_dataloader(self):
+        return self._make_test_loader(self.__test_ds)

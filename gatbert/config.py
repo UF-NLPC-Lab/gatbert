@@ -13,13 +13,11 @@ class GatbertConfig:
                  config: PretrainedConfig,
                  n_relations: int,
                  num_graph_layers: Optional[int] = None,
-                 att_type: AttentionType = 'edge_as_att',
-                 base_model: str = DEFAULT_MODEL):
+                 att_type: AttentionType = 'edge_as_att'):
         self.wrapped = config
         self.__num_graph_layers = num_graph_layers
         self.n_relations = n_relations
         self.att_type = att_type
-        self.base_model  = base_model
 
     @property
     def num_graph_layers(self):

@@ -22,33 +22,24 @@ def get_relation_embeddings(graph_root: os.PathLike) -> os.PathLike:
 def get_triples(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'numeric_triples.tsv.gz')
 
-def get_relation_mapping(graph_root: os.PathLike) -> Dict[str, int]:
-    rdict = {}
-    with gzip.open(os.path.join(graph_root, "relation_to_id.tsv.gz"), 'r') as r:
-        reader = csv.DictReader(r)
-        for row in reader:
-            label = row['label']
-            forward_id = int(row['id'])
-            rdict[label] = forward_id
-            rdict[f'{label}/inv'] = forward_id + 1
-    return rdict
-
 @dataclasses.dataclass
 class CNGraph:
+
     uri2id: Dict[str, int]
     id2uri: Dict[int, str]
     tok2id: Dict[str, int]
+    rel2id: Dict[str, int]
     adj: Dict[int, List[Tuple[int, int]]]
 
-    def __init__(self, uri2id, id2uri, adj):
+    def __init__(self, uri2id, id2uri, adj, rel2id):
         self.uri2id = uri2id
         self.id2uri = id2uri
         self.adj = adj
+        self.rel2id = rel2id
 
         matches = map(lambda pair: (CN_URI_PATT.fullmatch(pair[0]), pair[1]), self.uri2id.items())
         matches = filter(lambda pair: pair[0], matches)
         self.tok2id = {match.group(1):id for (match, id) in matches}
-        pass
 
 
     def __repr__(self):
@@ -83,14 +74,26 @@ class CNGraph:
         for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
             adj[head].append((tail, rel))
             adj[tail].append((head, inv_rel))
+
+        rel2id = {}
+        with gzip.open(os.path.join(pykeen_dir, "relation_to_id.tsv.gz"), 'r') as r:
+            reader = csv.DictReader(r)
+            for row in reader:
+                label = row['label']
+                forward_id = int(row['id'])
+                rel2id[label] = forward_id
+                rel2id[f'{label}/inv'] = forward_id + 1
+
         return CNGraph(
             uri2id=uri2id,
             id2uri=id2uri,
-            adj=adj
+            adj=adj,
+            rel2id=rel2id
         )
 
     @staticmethod
     def from_json(json_data: Dict[str, Any]):
+        raise NotImplementedError("No longer supported")
         id2uri = {int(k):v for k,v in json_data['id2uri'].items()}
         uri2id =  {v:k for k,v in id2uri.items()}
         adj = {int(k):v for k,v in json_data['adj'].items()}
