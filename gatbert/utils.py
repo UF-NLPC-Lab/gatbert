@@ -1,8 +1,12 @@
 import logging
+import operator
 from functools import reduce
 from typing import List, Any
 import time
 from contextlib import contextmanager
+
+def prod(iterable):
+    return reduce(operator.mul, iterable, 1)
 
 def map_func_gen(f, func):
     def mapped(*args, **kwargs):

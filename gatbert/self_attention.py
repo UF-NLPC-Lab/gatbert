@@ -1,5 +1,6 @@
 import abc
-
+from typing import Optional
+# 3rd Party
 import torch
 from transformers.models.bert.modeling_bert import BertSelfAttention
 # Local
@@ -76,14 +77,15 @@ class GatbertSelfAttention(torch.nn.Module):
     def forward(self,
                 node_states: torch.Tensor,
                 edge_indices: torch.Tensor,
-                node_type_ids: torch.Tensor):
+                node_type_ids: torch.Tensor,
+                relation_states: Optional[torch.Tensor] = None):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edge_indices: Array of shape (4, total_edges) where the 4 components are (batch_index, head_node_index, tail_node_index, relation_index)
         """
-        attention_probs = self.compute_attention_probs(node_states, edge_indices, node_type_ids)
-        values = self.compute_values(node_states, edge_indices, node_type_ids)
+        attention_probs = self.compute_attention_probs(node_states, edge_indices, node_type_ids, relation_states)
+        values = self.compute_values(node_states, edge_indices, node_type_ids, relation_states)
 
         # Why am I converting these to dense arrays?
         # torch.mul does indeed support sparse arrays, even if some dimensions have to be broadcast
@@ -103,7 +105,7 @@ class GatbertSelfAttention(torch.nn.Module):
         pass
 
     @abc.abstractmethod
-    def compute_attention_probs(self, node_states, edge_indices, node_type_ids):
+    def compute_attention_probs(self, node_states, edge_indices, node_type_ids, relation_states: Optional[torch.Tensor] = None):
         """
         Computes attention probabilities (including any dropout) between head and tail nodes.
 
@@ -116,7 +118,7 @@ class GatbertSelfAttention(torch.nn.Module):
         """
 
     @abc.abstractmethod
-    def compute_values(self, node_states, edge_indices, node_type_ids):
+    def compute_values(self, node_states, edge_indices, node_type_ids, relation_states: Optional[torch.Tensor] = None):
         """
         Args:
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
@@ -164,7 +166,7 @@ class HeterogeneousSelfAttention(GatbertSelfAttention):
         op_b = mask_b * kb_proj(states)
         return op_a + op_b
 
-    def compute_attention_probs(self, node_states, edge_indices, node_type_ids):
+    def compute_attention_probs(self, node_states, edge_indices, node_type_ids, _):
         """
         See section 3.2 of paper
         """
@@ -191,7 +193,7 @@ class HeterogeneousSelfAttention(GatbertSelfAttention):
         return sparse_softmax_and_dropout(logits, self.dropout)
 
 
-    def compute_values(self, node_states, edge_indices, node_type_ids):
+    def compute_values(self, node_states, edge_indices, node_type_ids, _):
         """
         See Section 3.3 - Message Passing of Heterogeneous Graph Transformer paper
         """
@@ -233,7 +235,7 @@ class RelationInnerProdSelfAttention(GatbertSelfAttention):
         self.key.load_state_dict(other.key.state_dict())
         self.value.load_state_dict(other.value.state_dict())
 
-    def compute_attention_probs(self, node_states, edge_indices, _):
+    def compute_attention_probs(self, node_states, edge_indices, _, _2):
         (batch_size, n_nodes) = node_states.shape[:2]
         Q = self.query(node_states)
         K = self.key(node_states)
@@ -257,7 +259,7 @@ class RelationInnerProdSelfAttention(GatbertSelfAttention):
         return sparse_softmax_and_dropout(logits, self.dropout)
 
 
-    def compute_values(self, node_states, _, _2):
+    def compute_values(self, node_states, _, _2, _3):
         return self.compute_simple_values(node_states, self.value)
 
 class TranslatedKeySelfAttention(GatbertSelfAttention):
@@ -287,7 +289,7 @@ class TranslatedKeySelfAttention(GatbertSelfAttention):
         self.key.load_state_dict(other.key.state_dict())
         self.value.load_state_dict(other.value.state_dict())
 
-    def compute_attention_probs(self, node_states, edge_indices, _):
+    def compute_attention_probs(self, node_states, edge_indices, _, _2):
         (batch_size, n_nodes) = node_states.shape[:2]
         Q = self.query(node_states)
         K = self.key(node_states)
@@ -317,7 +319,7 @@ class TranslatedKeySelfAttention(GatbertSelfAttention):
         )
         return sparse_softmax_and_dropout(logits, self.dropout)
 
-    def compute_values(self, node_states, _, _2):
+    def compute_values(self, node_states, _, _2, _3):
         return self.compute_simple_values(node_states, self.value)
 
 class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
@@ -353,7 +355,7 @@ class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
         self.key.load_state_dict(other.key.state_dict())
         self.value.load_state_dict(other.value.state_dict())
 
-    def compute_attention_probs(self, node_states, edge_indices, _):
+    def compute_attention_probs(self, node_states, edge_indices, _, _2):
         Q = self.query(node_states)
         K_node = self.key(node_states)
 
@@ -390,7 +392,7 @@ class EdgeAsAttendeeSelfAttention(GatbertSelfAttention):
         )
         return dropout_att
 
-    def compute_values(self, node_states, edge_indices, _):
+    def compute_values(self, node_states, edge_indices, _, _2):
         (batch_size, n_nodes) = node_states.shape[:2]
         V_node = self.value(node_states)
         V_edge = self.value_edge(edge_indices, batch_size, n_nodes)

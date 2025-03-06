@@ -6,7 +6,7 @@ import logging
 from itertools import product
 # 3rd party
 import torch
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, BertTokenizerFast
 # Local
 from .types import TensorDict
 from .constants import MAX_KB_NODES, TOKEN_TO_TOKEN_RELATION_ID, TOKEN_TO_KB_RELATION_ID
@@ -37,14 +37,16 @@ def keyed_pad(samples: List[TensorDict], k: str, padding_value=0):
 def keyed_scalar_stack(samples: List[TensorDict], k: str):
     return torch.stack([torch.squeeze(s[k]) for s in samples])
 
-def encode_text(tokenizer: PreTrainedTokenizerFast, sample: Sample | PretokenizedSample) -> TensorDict:
+def encode_text(tokenizer: PreTrainedTokenizerFast,
+                sample: Sample | PretokenizedSample,
+                tokenizer_kwargs = dict()) -> TensorDict:
     if isinstance(sample, Sample):
-        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=False, return_tensors='pt')
+        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=False, return_tensors='pt', **tokenizer_kwargs)
     elif isinstance(sample, GraphSample):
         sample = sample.to_sample()
-        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
+        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt', **tokenizer_kwargs)
     elif isinstance(sample, PretokenizedSample):
-        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt')
+        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt', **tokenizer_kwargs)
     else:
         raise ValueError(f"Invalid sample type {type(sample)}")
 

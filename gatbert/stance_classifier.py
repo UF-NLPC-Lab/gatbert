@@ -1,7 +1,7 @@
 import abc
-import inspect
-from typing import List, Optional
+from typing import List, Optional, Literal
 import os
+import copy
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, AutoConfig
@@ -13,6 +13,7 @@ from .constants import Stance, NodeType, DEFAULT_MODEL
 from .config import GatbertConfig
 from .encoder import *
 from .graph import *
+from .cgcn import Cgcn
 
 class StanceClassifier(torch.nn.Module):
 
@@ -258,43 +259,84 @@ class HybridClassifier(StanceClassifier):
     
 
 class ConcatClassifier(StanceClassifier):
+    """
+    Modeled after https://aclanthology.org/2021.findings-acl.278/,
+    except we provide the option to use a GAT instead of a CGCN
+    """
     def __init__(self,
-                 config: GatbertConfig,
-                 graph: os.PathLike):
+                 pretrained_model: str,
+                 graph: os.PathLike,
+                 graph_model: Literal['cgcn', 'gat'] = 'gat'):
         """
         Args:
             pretrained_model_name: model to load for text portion of the model
             config: config for the graph portion of the model
         """
-        super().__init__(config)
+        super().__init__()
 
-        self.bert = BertModel(config.wrapped)
-        self.concept_embeddings = GatbertEmbeddings(config)
-        self.gat = GatbertEncoder(config)
+        self.bert = BertModel.from_pretrained(pretrained_model)
 
-        self.linear = torch.nn.Linear(config.hidden_size + self.bert.config.hidden_size, len(Stance), bias=False)
+        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph))
+        self.relation_embeddings: torch.nn.Embedding = torch.load(get_relation_embeddings(graph))
+        (_, self.entity_embed_dim) = self.entity_embeddings.weight.shape
+        assert len(self.relation_embeddings.weight.shape) == 2
+        (self.n_relations, self.relation_embed_dim) = self.relation_embeddings.weight.shape
+        assert self.entity_embed_dim == self.relation_embed_dim
+
+        if graph_model == 'gat':
+            gat_config = GatbertConfig(
+                self.bert.config,
+                self.n_relations,
+                num_graph_layers=2,
+                rel_dims=(self.relation_embed_dim,)
+            )
+            gat_config.hidden_size = self.entity_embed_dim
+            self.gat = GatbertEncoder(gat_config)
+        elif graph_model == 'cgcn':
+            self.cgcn = Cgcn(self.entity_embed_dim, self.n_relations)
+        else:
+            raise ValueError(f"Invalid model_type {graph_model}")
+        self.model_type = graph_model
+
+        self.pred_head = torch.nn.Linear(2 * self.bert.config.hidden_size + 2 * self.entity_embed_dim, len(Stance), bias=False)
+        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), CNGraph.read(graph))
     
     def load_pretrained_weights(self):
         self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).embeddings)
         # FIXME: Again, need a better approach than just reinstantiating the model
         self.bert = BertModel.from_pretrained(self.config.base_model)
 
-    def forward(self, text, graph):
-        # Text Calculation
+    def get_encoder(self):
+        return self.__encoder
+
+    def forward(self,
+                text,
+                target_text_mask,
+                context_text_mask,
+                input_ids,
+                target_node_mask,
+                context_node_mask,
+                edge_indices):
+
+
+        # (1) Encode text
         bert_out = self.bert(**text)
-        text_vec = bert_out.last_hidden_state[:, 0]
-        # Graph Calculation
-        edge_indices = graph.pop('edge_indices')
-        node_counts = graph.pop('node_counts')
-        node_counts = torch.maximum(node_counts, torch.tensor(1))
-        graph_embeddings = self.concept_embeddings(**graph)
-        graph_hidden_states = self.gat(graph_embeddings, edge_indices)
-        avg_graph_hidden_states = torch.sum(graph_hidden_states, dim=1) / torch.unsqueeze(node_counts, dim=-1)
-
-        # Concat
-        feature_vec = torch.concat([text_vec, avg_graph_hidden_states], dim=-1)
-
-        logits = self.linear(feature_vec)
+        hidden_states = bert_out.last_hidden_state
+        target_text_vec = target_text_mask * hidden_states / torch.sum(target_text_mask, dim=-1, keepdim=True)
+        context_text_vec = context_text_mask * hidden_states / torch.sum(context_text_mask, dim=-1, keepdim=True)
+        # (2) Encode graph
+        node_embeddings = self.entity_embeddings(input_ids)
+        if self.model_type == 'cgcn':
+            rel_embeddings = self.relation_embeddings.weight
+            final_node_states, _ = self.cgcn(node_embeddings, edge_indices, rel_embeddings)
+        else:
+            # TODO: incorporate the relation embeddings later
+            final_node_states, _ = self.gat(node_embeddings, edge_indices)
+        target_node_vec = target_node_mask * final_node_states / torch.sum(target_node_mask, dim=-1, keepdim=True)
+        context_node_vec = context_node_mask * final_node_states / torch.sum(context_node_mask, dim=-1, keepdim=True)
+        # (3) CONCAT their representations and project
+        feature_vec = torch.concatenate([target_text_vec, context_text_vec, target_node_vec, context_node_vec], dim=-1)
+        logits = self.pred_head(feature_vec)
         return logits
 
     class Encoder(Encoder):
@@ -305,20 +347,72 @@ class ConcatClassifier(StanceClassifier):
         def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: CNGraph):
             self.__tokenizer = tokenizer
             self.__graph = graph
+
+        @staticmethod
+        def get_target_seeds_mask(sample: GraphSample) -> torch.Tensor:
+            mask = torch.zeros([1, len(sample.kb)], dtype=torch.bool)
+            text_end = len(sample.target) + len(sample.context)
+            target_len = len(sample.target)
+            target_seeds = [
+                e.tail_node_index - text_end
+                for e in sample.edges
+                if e.head_node_index < target_len and e.tail_node_index >= text_end
+            ] + [
+                e.head_node_index - text_end
+                for e in sample.edges
+                if e.tail_node_index < target_len and e.head_node_index >= text_end
+            ]
+            mask[0, target_seeds] = True
+            return mask
+
+        @staticmethod
+        def get_context_seeds_mask(sample: GraphSample) -> torch.Tensor:
+            mask = torch.zeros([1, len(sample.kb)], dtype=torch.bool)
+            context_start = len(sample.target)
+            text_end = len(sample.target) + len(sample.context)
+            context_seeds = [
+                e.tail_node_index - text_end
+                for e in sample.edges
+                if context_start <= e.head_node_index < text_end and e.tail_node_index >= text_end
+            ] + [
+                e.head_node_index - text_end
+                for e in sample.edges
+                if context_start <= e.tail_node_index < text_end and e.head_node_index >= text_end
+            ]
+            mask[0, context_seeds] = True
+            return mask
+
     
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
 
             input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb]])
-            node_type_ids = torch.full_like(input_ids, fill_value=NodeType.KB)
 
-            # FIXME: Need node counts here
+            # FIXME: need a target_text_mask and context_text_mask
+            text_encoding = encode_text(self.__tokenizer, sample)
+
+            special_tokens_mask = text_encoding.pop('special_tokens_mask')
+            special_inds = torch.where(special_tokens_mask)[-1]
+
+            seqlen = text_encoding['input_ids'].numel()
+            cls_ind = special_inds[0]
+            sep_ind = special_inds[1]
+            if len(special_inds) > 2:
+                end_ind = special_inds[2]
+            else:
+                end_ind = seqlen
+            all_inds = torch.arange(0, seqlen)
+            target_text_mask = torch.logical_and(cls_ind < all_inds, all_inds < sep_ind)
+            context_text_mask = torch.logical_and(sep_ind < all_inds, all_inds < end_ind)
 
             return {
-                "text": encode_text(self.__tokenizer, sample),
+                "text": text_encoding,
+                "target_text_mask": target_text_mask,
+                "context_text_mask": context_text_mask,
 
                 "input_ids": input_ids,
-                "node_type_ids": node_type_ids,
+                "target_node_mask": self.get_target_seeds_mask(sample),
+                "context_node_mask": self.get_context_seeds_mask(sample),
                 "edge_indices": extract_kb_edges(sample),
                 "stance": torch.tensor([sample.stance.value]),
             }
@@ -327,11 +421,15 @@ class ConcatClassifier(StanceClassifier):
             rdict = {}
 
             rdict['text'] = collate_ids(self.__tokenizer, samples, return_attention_mask=True)
+            rdict['target_text_mask'] = keyed_pad(samples, 'target_text_mask')
+            rdict['context_text_mask'] = keyed_pad(samples, 'context_text_mask')
+
 
             rdict['input_ids'] = keyed_pad(samples, 'input_ids')
-            rdict["node_type_ids"] = keyed_pad(samples, 'node_type_ids')
+            rdict['target_node_mask'] = keyed_pad(samples, 'target_node_mask')
+            rdict['context_node_mask'] = keyed_pad(samples, 'context_node_mask')
+            rdict['node_count'] = keyed_scalar_stack(samples, 'node_count')
             rdict["edge_indices"] = collate_edge_indices(s['edge_indices'] for s in samples)
-
             rdict["stance"] = keyed_scalar_stack(samples, 'stance')
     
             return rdict
