@@ -60,8 +60,7 @@ class BertClassifier(StanceClassifier):
 class HybridClassifier(StanceClassifier):
     def __init__(self,
                 pretrained_model: str,
-                graph: os.PathLike,
-                 config: GatbertConfig):
+                graph: os.PathLike):
         super().__init__()
 
         graph_obj = CNGraph.read(graph)
@@ -70,11 +69,11 @@ class HybridClassifier(StanceClassifier):
             n_relations=len(graph_obj.rel2id),
         )
 
-        self.embeddings = GatbertEmbeddings(config, graph)
-        self.encoder = GatbertEncoder(config)
+        self.embeddings = GatbertEmbeddings(self.config, graph)
+        self.encoder = GatbertEncoder(self.config)
         self.encoder.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).encoder)
         self.projection = torch.nn.Linear(
-            config.hidden_size,
+            self.config.hidden_size,
             out_features=len(Stance),
             bias=False
         )

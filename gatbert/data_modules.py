@@ -1,22 +1,15 @@
 # STL
 from __future__ import annotations
 # 3rd Party
-from transformers import AutoTokenizer
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, Tuple, Optional, List
 from .data import MapDataset, parse_ez_stance, parse_graph_tsv, parse_semeval, parse_vast
-from .encoder import Encoder
-from .preprocessor import Preprocessor
-from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
+from .constants import DEFAULT_BATCH_SIZE
 from .stance_classifier import *
 from .types import CorpusType, Transform
 from .utils import map_func_gen
-
-def rm_external(s: GraphSample) -> GraphSample:
-    assert isinstance(s, GraphSample)
-    return s.strip_external()
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
@@ -40,7 +33,7 @@ class StanceDataModule(L.LightningDataModule):
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         if transforms:
             transform_map = {
-                'rm_external': rm_external
+                'rm_external': lambda s: s.strip_external() if isinstance(s, GraphSample) else s
             }
             for t in transforms:
                 if t in transform_map:
@@ -48,7 +41,7 @@ class StanceDataModule(L.LightningDataModule):
 
         # Protected variables
         self._encoder = classifier.get_encoder()
-        self._parse_fn = map_func_gen(self.__encoder.encode, parse_fn)
+        self._parse_fn = map_func_gen(self._encoder.encode, parse_fn)
 
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
