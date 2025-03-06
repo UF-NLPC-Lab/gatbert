@@ -39,6 +39,7 @@ class StanceDataModule(L.LightningDataModule):
                 if t in transform_map:
                     parse_fn = map_func_gen(transform_map[t], parse_fn)
 
+        self.classifier = classifier
         # Protected variables
         self._encoder = classifier.get_encoder()
         self._parse_fn = map_func_gen(self._encoder.encode, parse_fn)

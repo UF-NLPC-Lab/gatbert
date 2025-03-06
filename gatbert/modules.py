@@ -72,7 +72,7 @@ class MyStanceModule(StanceModule):
     ):
         super().__init__()
         self.save_hyperparameters()
-        self.__classifier = classifier
+        self.classifier = classifier
     def forward(self, *args, **kwargs):
-        return self.__classifier(*args, **kwargs)
+        return self.classifier(*args, **kwargs)
 
