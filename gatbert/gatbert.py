@@ -1,4 +1,5 @@
 # STL
+import os
 from typing import Optional
 # 3rd Party
 import torch
@@ -17,6 +18,7 @@ from .self_attention import GatbertSelfAttention, \
     TranslatedKeySelfAttention, \
     RelationInnerProdSelfAttention, \
     HeterogeneousSelfAttention
+from .graph import get_entity_embeddings
 from .rel_mat_embeddings import RelationMatrixEmbeddings
 from .config import GatbertConfig
 from .utils import prod
@@ -112,7 +114,8 @@ class GatbertEncoder(torch.nn.Module):
         return node_states, relation_states
 
 class GatbertEmbeddings(torch.nn.Module):
-    def __init__(self, config: GatbertConfig):
+
+    def __init__(self, config: GatbertConfig, graph: os.PathLike):
         super().__init__()
         self.word_embeddings = torch.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.position_embeddings = torch.nn.Embedding(config.max_position_embeddings, config.hidden_size)
@@ -120,7 +123,8 @@ class GatbertEmbeddings(torch.nn.Module):
         self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
-        self.hidden_size = config.hidden_size
+        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph))
+        self.entity_proj = torch.nn.Linear(self.entity_embeddings.shape[-1], config.hidden_size, bias=True)
 
     def load_pretrained_weights(self, other: BertEmbeddings):
         self.word_embeddings.load_state_dict(other.word_embeddings.state_dict())
@@ -130,46 +134,30 @@ class GatbertEmbeddings(torch.nn.Module):
 
     def forward(self,
                 input_ids: torch.Tensor,
-                pooling_mask: torch.Tensor,
+                kb_mask: torch.Tensor,
                 position_ids: Optional[torch.Tensor] = None,
                 token_type_ids: Optional[torch.Tensor] = None):
-        if not pooling_mask.is_coalesced():
-            pooling_mask = pooling_mask.coalesce()
-        (batch_size, max_nodes, max_subnodes) = pooling_mask.shape
-
-        # (batch_size, max_subnodes, embedding)
-        subnode_embeddings = self.word_embeddings(input_ids)
+        # Apply the mask here so we just use a 0-id for not text tokens
+        not_kb_mask = ~kb_mask
+        token_ids = input_ids * not_kb_mask
+        # (batch_size, max_nodes, embedding)
+        token_embeddings = self.word_embeddings(token_ids)
         if position_ids is not None:
             pos_embed = self.position_embeddings(position_ids)
-            subnode_embeddings += pos_embed
+            token_embeddings += pos_embed
         if token_type_ids is not None:
             tok_type_embed = self.token_type_embeddings(token_type_ids)
-            subnode_embeddings += tok_type_embed
-        # (batch_size * max_subnodes, embedding)
-        subnode_embeddings = torch.flatten(subnode_embeddings, end_dim=-2)
+            token_embeddings += tok_type_embed
+        # Apply the mask again here because we've no assurance on what 0's embedding is
+        token_embeddings = token_embeddings * torch.unsqueeze(not_kb_mask, -1)
 
+        # Same principle of applying the mask twice applies here
+        node_embeddings = self.entity_embeddings(input_ids * kb_mask) 
+        # Match the token embedding size
+        node_embeddings = self.entity_proj(node_embeddings)
+        node_embeddings = node_embeddings * torch.unsqueeze(kb_mask, -1)
 
-        indices = pooling_mask.indices()
-        batch_node_indices = indices[0] * max_nodes + indices[1]
-        batch_subnode_indices = indices[0] * max_subnodes + indices[2]
-        # (batch_size * max_nodes, batch_size * max_subnodes)
-        expanded_mask = torch.sparse_coo_tensor(
-            indices=torch.stack([batch_node_indices, batch_subnode_indices]),
-            values=pooling_mask.values(),
-            size=(batch_size * max_nodes, batch_size * max_subnodes),
-            is_coalesced=True,
-            requires_grad=True,
-            device=pooling_mask.device
-        )
-
-        # (batch_size * max_nodes, batch_size * max_subnodes) @ (batch_size * max_subnodes, embedding)
-        node_embeddings = torch.sparse.mm(expanded_mask, subnode_embeddings)
-        node_embeddings = node_embeddings.reshape(batch_size, max_nodes, self.hidden_size)
-
-        node_embeddings = self.layer_norm(node_embeddings)
-        node_embeddings = self.dropout(node_embeddings)
-
-        return node_embeddings
+        return token_embeddings + node_embeddings
 
 class GatbertModel(torch.nn.Module):
     def __init__(self, config: GatbertConfig):

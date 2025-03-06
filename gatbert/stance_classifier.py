@@ -21,12 +21,7 @@ class StanceClassifier(torch.nn.Module):
     def get_encoder(self) -> Encoder:
         pass
 
-    @abc.abstractmethod
-    def load_pretrained_weights(self):
-        pass
-
-
-class BertStanceClassifier(StanceClassifier):
+class BertClassifier(StanceClassifier):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL):
         super().__init__()
@@ -37,10 +32,6 @@ class BertStanceClassifier(StanceClassifier):
             bias=False
         )
         self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model))
-
-    def load_pretrained_weights(self):
-        # TODO: Find a cleaner way than just reinstantiating the object
-        self.bert = BertModel.from_pretrained(self.bert.config.base_model)
 
     def get_encoder(self):
         return self.__encoder
@@ -66,66 +57,6 @@ class BertStanceClassifier(StanceClassifier):
             }
 
 
-class GatClassifier(StanceClassifier):
-    """
-    Produces a hidden state summarizing just a graph (no text)
-    """
-    def __init__(self,
-                 pretrained_model: str,
-                 graph: os.PathLike,
-                 num_layers: int = 2):
-        super().__init__()
-        graph_obj = CNGraph.read(graph)
-        self.config = GatbertConfig(
-            BertConfig.from_pretrained(pretrained_model),
-            n_relations=len(graph_obj.rel2id),
-            num_layers=num_layers,
-        )
-        self.concept_embeddings = GatbertEmbeddings(self.config)
-        self.gat = GatbertEncoder(self.config)
-        self.linear = torch.nn.Linear(self.config.hidden_size, len(Stance), bias=False)
-        self.__encoder = self.Encoder(graph_obj)
-        self.__pretrained_model = pretrained_model
-
-    def load_pretrained_weights(self):
-        self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.__pretrained_model).embeddings)
-        # TODO: Load graph embeddings
-
-    def get_encoder(self):
-        return self.__encoder
-
-    def forward(self, input_ids, pooling_mask, edge_indices, node_counts):
-        # Graph Calculation
-        graph_embeddings = self.concept_embeddings(input_ids=input_ids,
-                                                   pooling_mask=pooling_mask)
-        graph_hidden_states = self.gat(graph_embeddings, edge_indices)
-        node_counts = torch.maximum(node_counts, torch.tensor(1))
-        avg_graph_hidden_states = torch.sum(graph_hidden_states, dim=1) / torch.unsqueeze(node_counts, dim=-1)
-        logits = self.linear(avg_graph_hidden_states)
-        return logits
-
-    class Encoder(Encoder):
-        def __init__(self, graph: CNGraph):
-            self.__graph = graph
-        def encode(self, sample: GraphSample) -> TensorDict:
-            assert isinstance(sample, GraphSample)
-            input_ids = [self.__graph.uri2id[node] for node in sample.kb]
-            node_counts = len(input_ids)
-            return {
-                "input_ids" : torch.tensor([input_ids]),
-                "node_counts": torch.tensor([node_counts]),
-                "edge_indices": extract_kb_edges(sample),
-                "stance": torch.tensor([sample.stance.value])
-            }
-        def collate(self, samples: List[TensorDict]) -> TensorDict:
-            return {
-                "input_ids": keyed_pad(samples, 'input_ids'),
-                "node_counts": keyed_scalar_stack(samples, "node_counts"),
-                "edge_indices": collate_edge_indices(s['edge_indices'] for s in samples),
-                "stance": keyed_scalar_stack(samples, "stance")
-            }
-
-
 class HybridClassifier(StanceClassifier):
     def __init__(self,
                 pretrained_model: str,
@@ -138,24 +69,28 @@ class HybridClassifier(StanceClassifier):
             BertConfig.from_pretrained(pretrained_model),
             n_relations=len(graph_obj.rel2id),
         )
-        self.gatbert = GatbertModel(config)
+
+        self.embeddings = GatbertEmbeddings(config, graph)
+        self.encoder = GatbertEncoder(config)
+        self.encoder.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).encoder)
         self.projection = torch.nn.Linear(
             config.hidden_size,
             out_features=len(Stance),
             bias=False
         )
-        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph_obj)
-
-    def load_pretrained_weights(self):
-        self.gatbert.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model))
-        # TODO: Load graph node embeddings
+        self.__preprocessor = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph_obj)
 
     def get_encoder(self):
-        return self.__encoder
+        return self.__preprocessor
 
-    def forward(self, *args, **kwargs):
-        final_hidden_state = self.gatbert(*args, **kwargs)
-        logits = self.projection(final_hidden_state[:, 0])
+    def forward(self, input_ids, kb_mask, edge_indices, position_ids = None, token_type_ids = None):
+        node_embeddings = self.embeddings(input_ids=input_ids,
+                                     kb_mask=kb_mask,
+                                     position_ids=position_ids,
+                                     token_type_ids=token_type_ids)
+        # TODO: incorporate relational embeddings ?
+        final_node_states, _ = self.encoder(node_embeddings, edge_indices=edge_indices)
+        logits = self.projection(final_node_states[:, 0])
         return logits
 
 
@@ -236,14 +171,14 @@ class HybridClassifier(StanceClassifier):
             new_edges.sort()
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
 
-            node_type_ids = torch.tensor([NodeType.TOKEN.value] * new_text_nodes + [NodeType.KB.value] * num_kb_nodes, device=device)
-            node_type_ids = torch.unsqueeze(node_type_ids, 0)
+            kb_mask = torch.tensor([0] * new_text_nodes + [1] * num_kb_nodes, device=device)
+            kb_mask = torch.unsqueeze(kb_mask, 0)
 
             return {
                 "input_ids" : concat_ids,
                 "position_ids": position_ids,
                 "token_type_ids": token_type_ids,
-                "node_type_ids": node_type_ids,
+                "kb_mask": kb_mask,
                 "edge_indices": new_edges,
                 "stance": torch.tensor([sample.stance.value], device=device)
             }
@@ -252,7 +187,7 @@ class HybridClassifier(StanceClassifier):
                 "input_ids": keyed_pad(samples, "input_ids"),
                 "position_ids": keyed_pad(samples, "position_ids"),
                 "token_type_ids": keyed_pad(samples, "token_type_ids"),
-                "node_type_ids": keyed_pad(samples, "node_type_ids"),
+                "kb_mask": keyed_pad(samples, "kb_mask"),
                 "edge_indices": collate_edge_indices(s['edge_indices'] for s in samples),
                 "stance": keyed_scalar_stack(samples, "stance")
             }
@@ -301,11 +236,6 @@ class ConcatClassifier(StanceClassifier):
         self.pred_head = torch.nn.Linear(2 * self.bert.config.hidden_size + 2 * self.entity_embed_dim, len(Stance), bias=False)
         self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), CNGraph.read(graph))
     
-    def load_pretrained_weights(self):
-        self.concept_embeddings.load_pretrained_weights(BertModel.from_pretrained(self.config.base_model).embeddings)
-        # FIXME: Again, need a better approach than just reinstantiating the model
-        self.bert = BertModel.from_pretrained(self.config.base_model)
-
     def get_encoder(self):
         return self.__encoder
 
