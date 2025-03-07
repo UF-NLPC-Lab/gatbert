@@ -12,7 +12,7 @@ class CgcnNodeUpdate(torch.nn.Module):
                  out_dim: int,
                  n_relations: int,
                  comp: CompOp = lambda h,r: h - r):
-
+        super().__init__()
         # TODO: Update this to match the original paper and have
         # different projections for forward rels, inverse rels, and self-loops
         self.proj = torch.nn.Linear(comp_dim, out_dim, bias=False)
@@ -55,7 +55,7 @@ class Cgcn(torch.nn.Module):
                  n_relations: int,
                  n_layers: int = 2,
                  comp: CompOp = lambda h,r: h - r):
-
+        super().__init__()
         # TODO: Don't always assume that the relation will be a vector?
         self.graph_layers = torch.nn.ModuleList(
             [CgcnNodeUpdate(hidden_size, hidden_size, n_relations, comp) for _ in range(n_layers)]
