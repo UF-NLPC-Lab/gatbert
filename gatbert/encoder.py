@@ -74,7 +74,7 @@ def collate_ids(tokenizer: PreTrainedTokenizerFast,
         # FIXME: Need a custom pad value for this?
         rdict['position_ids'] = keyed_pad(samples, 'position_ids')
     if 'token_type_ids' in samples[0]:
-        rdict['token_type_ids'] = keyed_pad(samples, padding_value=tokenizer.pad_token_type_id)
+        rdict['token_type_ids'] = keyed_pad(samples, 'token_type_ids', padding_value=tokenizer.pad_token_type_id)
     return rdict
 
 def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:

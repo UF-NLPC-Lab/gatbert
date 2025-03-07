@@ -1,18 +1,9 @@
-from typing import Optional, Dict
-import inspect
 # 3rd Party
 import torch
-from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
-from transformers import AutoConfig
 # Local
 from .f1_calc import F1Calc
-from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS, DEFAULT_ATT_TYPE, DEFAULT_BATCH_SIZE
-from .stance_classifier import StanceClassifier
-from .config import GatbertConfig
-from .types import AttentionType, CorpusType
-from .data import parse_ez_stance, parse_graph_tsv, parse_semeval, parse_vast, MapDataset
-from .utils import map_func_gen
+from .stance_classifier import *
 
 class StanceModule(L.LightningModule):
     def __init__(self):

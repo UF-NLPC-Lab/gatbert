@@ -14,7 +14,6 @@ from .utils import map_func_gen
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 classifier: StanceClassifier,
                  batch_size: int = DEFAULT_BATCH_SIZE,
                  transforms: Optional[List[Transform]] = None
                 ):
@@ -39,18 +38,26 @@ class StanceDataModule(L.LightningDataModule):
                 if t in transform_map:
                     parse_fn = map_func_gen(transform_map[t], parse_fn)
 
-        self.classifier = classifier
-        # Protected variables
-        self._encoder = classifier.get_encoder()
-        self._parse_fn = map_func_gen(self._encoder.encode, parse_fn)
+        self.__raw_parse_fn = parse_fn
+        self.__parse_fn = None
+        # Has to be set explicitly (see fit_and_test.py for an example)
+        self.encoder: Encoder = None
+
+    @property
+    def _parse_fn(self):
+        if not self.__parse_fn:
+            if not self.encoder:
+                raise ValueError("Encoder not set")
+            self.__parse_fn = map_func_gen(self.encoder.encode, self.__raw_parse_fn)
+        return self.__parse_fn
 
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._encoder.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
     def _make_val_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._encoder.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
     def _make_test_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._encoder.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
 
 
 class RandomSplitDataModule(StanceDataModule):
