@@ -9,6 +9,7 @@ import torch
 from pykeen.datasets import ConceptNet
 from pykeen.pipeline import pipeline
 from pykeen.models import TransE
+from pykeen.utils import set_random_seed
 # Local
 from .graph import get_entity_embeddings, get_relation_embeddings
 
@@ -29,22 +30,22 @@ def main(raw_args):
                         help="Embedding type. Don't specify to just get all the relation triples")
     parser.add_argument("-o", metavar="output_dir/",
                         help="Output directory containing all the triples, and a torch.nn.Embedding save model")
+    parser.add_argument("--seed", type=int, default=1, metavar="1", help="Random seed for pykeen")
     args = parser.parse_args(raw_args)
 
     assert args.embed is None or args.embed in {'TransE'}
 
+    set_random_seed(args.seed)
     create_inverse_triples = True
     
-    ds = ConceptNet(name=args.cn, random_state=0, create_inverse_triples=create_inverse_triples)
+    ds = ConceptNet(name=args.cn, create_inverse_triples=create_inverse_triples)
     os.makedirs(args.o, exist_ok=True)
     out_path = pathlib.Path(args.o)
     if args.embed:
         pipeline_res = pipeline(
             dataset=ds,
             model=args.embed,
-            training_kwargs={'num_epochs': 1},
-            lr_scheduler='ExponentialLR',
-            lr_scheduler_kwargs=dict(gamma=0.99)
+            random_seed=args.seed,
         )
         entity_embeddings, relation_embeddings = extract_embeddings(pipeline_res.model)
         torch.save(entity_embeddings, get_entity_embeddings(out_path))
@@ -64,4 +65,3 @@ def main(raw_args):
 
 if __name__ == "__main__":
     main(raw_args=sys.argv[1:])
-    pass
