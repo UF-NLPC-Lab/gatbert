@@ -11,6 +11,7 @@ import pathlib
 import pandas as pd
 # Local
 from .constants import CN_URI_PATT
+from .utils import open_gzip_or_plain
 
 EdgeList = List[Tuple[int, int, int]]
 NodeList = List[int]
@@ -57,14 +58,14 @@ class CNGraph:
         pykeen_dir  = pathlib.Path(pykeen_dir)
         # relation_df = pd.read_csv(pykeen_dir.join('relation_to_id.tsv.gz'), compression='gzip', delimiter='\t')
 
-        entity_df   = pd.read_csv(pykeen_dir.joinpath('entity_to_id.tsv.gz'), compression='gzip', delimiter='\t')
-        raw_uris = entity_df.label
-        raw_ids = entity_df.id.apply(int)
-        uri2id = dict(zip(raw_uris, raw_ids))
-        id2uri = dict(zip(raw_ids, entity_df.label))
+        uri2id = {}
+        with open_gzip_or_plain(pykeen_dir.joinpath('entity_to_id.tsv')) as r:
+            reader = csv.DictReader(r, delimiter='\t')
+            for row in reader:
+                uri2id[row['label']] = int(row['id'])
+        id2uri = {v:k for (k, v) in uri2id.items()}
 
-        del entity_df
-
+        # TODO: don't use pandas for this
         edge_df = pd.read_csv(pykeen_dir.joinpath('numeric_triples.tsv.gz'), compression='gzip', delimiter='\t')
         heads = edge_df['head'].apply(int) # head is also a DF method. Use [] to circumvent that
         tails = edge_df['tail'].apply(int)  # Same for tail
@@ -76,8 +77,8 @@ class CNGraph:
             adj[tail].append((head, inv_rel))
 
         rel2id = {}
-        with gzip.open(os.path.join(pykeen_dir, "relation_to_id.tsv.gz"), 'r') as r:
-            reader = csv.DictReader(r)
+        with open_gzip_or_plain(pykeen_dir.joinpath("relation_to_id.tsv")) as r:
+            reader = csv.DictReader(r, delimiter='\t')
             for row in reader:
                 label = row['label']
                 forward_id = int(row['id'])

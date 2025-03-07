@@ -55,7 +55,7 @@ class GatbertAttention(torch.nn.Module):
             node_states: Strided tensor of shape (batch, nodes, hidden_state_size)
             edge_states: Hybrid array of shape (batch, nodes, nodes, hidden_state_size) where last dimension is dense
         """
-        self_outputs = self.attention(hidden_states, edge_indices, node_type_ids=node_type_ids, rel_states=relation_states)
+        self_outputs = self.attention(hidden_states, edge_indices, node_type_ids=node_type_ids, relation_states=relation_states)
         outputs = self.output(self_outputs, hidden_states)
 
         return outputs
@@ -123,7 +123,7 @@ class GatbertEmbeddings(torch.nn.Module):
         self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
-        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph))
+        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph), weights_only=False)
         self.entity_proj = torch.nn.Linear(self.entity_embeddings.shape[-1], config.hidden_size, bias=True)
 
     def load_pretrained_weights(self, other: BertEmbeddings):
