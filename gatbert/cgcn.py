@@ -25,21 +25,31 @@ class CgcnNodeUpdate(torch.nn.Module):
         (batch_size, num_nodes) = node_states.shape[:2]
         device = node_states.device
 
+        # return node_states
+
         comps = self.comp(node_states[edge_indices[0], edge_indices[2]], rel_states[edge_indices[3]] )
         comps = self.proj(comps)
+
+        # torch.sum on a sparse tensor doesn't support backpropagation, apparently
+        # But coalescing over elements with identical indices does
+        # So omit the indices for the tail node and the relation
+        # That means we'll have sets of identical indices for head nodes,
+        # whose values will get summed together when we coalesce
         summands = torch.sparse_coo_tensor(
-            indices=edge_indices,
+            indices=edge_indices[:2],
             values=comps,
-            size=(batch_size, num_nodes, num_nodes, self.n_relations, self.out_dim),
+            size=(batch_size, num_nodes, self.out_dim),
             device=node_states.device,
             requires_grad=True,
-            is_coalesced=True
+            is_coalesced=False
         )
-        summed = torch.sum(summands, dim=(2, 3))
+        summed = summands.coalesce().to_dense()
 
+        # Similar principle applies for the counts
         uncoalesced_counts = torch.sparse_coo_tensor(
             indices=edge_indices[:2], # Only include batch and head node
             values=torch.ones(edge_indices.shape[-1], device=device),
+            size=(batch_size, num_nodes),
             device=device,
             requires_grad=False,
             is_coalesced=False,
@@ -71,5 +81,5 @@ class Cgcn(torch.nn.Module):
         for (graph_layer, rel_proj) in zip(self.graph_layers, self.relation_projects):
             node_states = graph_layer(node_states, edge_indices, relation_states)
             # FIXME: Need an activation function for the node_states
-            relation_states = rel_proj(rel_proj)
+            relation_states = rel_proj(relation_states)
         return node_states, relation_states
