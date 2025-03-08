@@ -242,7 +242,8 @@ class ConcatClassifier(StanceClassifier):
 
     @staticmethod
     def masked_average(mask, embeddings) -> torch.Tensor:
-        denom = torch.sum(mask, dim=-1, keepdim=True)
+        # Need the epsilon to prevent divide-by-zero errors
+        denom = torch.sum(mask, dim=-1, keepdim=True) + 1e-6
         return torch.sum(torch.unsqueeze(mask, -1) * embeddings, dim=-2) / denom
 
     def forward(self,
