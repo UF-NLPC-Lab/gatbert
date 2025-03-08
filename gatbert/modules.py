@@ -49,6 +49,13 @@ class StanceModule(L.LightningModule):
         self.log(f"{prefix}_macro_f1", calc.macro_f1)
         calc.reset()
 
+    # FIXME: Figure out the more standard way to do this
+    def on_train_epoch_start(self):
+        self.train()
+    def on_validation_epoch_start(self):
+        self.eval()
+    def on_test_epoch_start(self):
+        self.eval()
 
 class MyStanceModule(StanceModule):
     """
@@ -64,6 +71,8 @@ class MyStanceModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.classifier = classifier
+        # FIXME: Do this in a cleaner way
+        self.train()
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
 
