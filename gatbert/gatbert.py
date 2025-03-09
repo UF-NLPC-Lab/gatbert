@@ -124,7 +124,7 @@ class GatbertEmbeddings(torch.nn.Module):
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
         self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph), weights_only=False)
-        self.entity_proj = torch.nn.Linear(self.entity_embeddings.shape[-1], config.hidden_size, bias=True)
+        self.entity_proj = torch.nn.Linear(self.entity_embeddings.weight.shape[-1], config.hidden_size, bias=True)
 
     def load_pretrained_weights(self, other: BertEmbeddings):
         self.word_embeddings.load_state_dict(other.word_embeddings.state_dict())
@@ -138,7 +138,7 @@ class GatbertEmbeddings(torch.nn.Module):
                 position_ids: Optional[torch.Tensor] = None,
                 token_type_ids: Optional[torch.Tensor] = None):
         # Apply the mask here so we just use a 0-id for not text tokens
-        not_kb_mask = ~kb_mask
+        not_kb_mask = torch.where(kb_mask > 0, 0, 1)
         token_ids = input_ids * not_kb_mask
         # (batch_size, max_nodes, embedding)
         token_embeddings = self.word_embeddings(token_ids)
