@@ -28,6 +28,7 @@ def main(raw_args):
                         help="Path to conceptnet assertions")
     parser.add_argument("--embed", metavar='TransE',
                         help="Embedding type. Don't specify to just get all the relation triples")
+    parser.add_argument("--dim", metavar="768", type=int, default=50, help="Embedding dimensionality")
     parser.add_argument("-o", metavar="output_dir/",
                         help="Output directory containing all the triples, and a torch.nn.Embedding save model")
     parser.add_argument("--seed", type=int, default=1, metavar="1", help="Random seed for pykeen")
@@ -45,6 +46,7 @@ def main(raw_args):
         pipeline_res = pipeline(
             dataset=ds,
             model=args.embed,
+            model_kwargs={"embedding_dim": args.dim},
             random_seed=args.seed,
         )
         entity_embeddings, relation_embeddings = extract_embeddings(pipeline_res.model)
