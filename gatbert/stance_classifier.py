@@ -70,9 +70,11 @@ class HybridClassifier(StanceClassifier):
             n_relations=len(graph_obj.rel2id),
         )
 
+        pretrained_model_obj = BertModel.from_pretrained(pretrained_model)
         self.embeddings = GatbertEmbeddings(self.config, graph)
+        self.embeddings.load_pretrained_weights(pretrained_model_obj.embeddings)
         self.encoder = GatbertEncoder(self.config)
-        self.encoder.load_pretrained_weights(BertModel.from_pretrained(pretrained_model).encoder)
+        self.encoder.load_pretrained_weights(pretrained_model_obj.encoder)
         self.projection = torch.nn.Linear(
             self.config.hidden_size,
             out_features=len(Stance),
