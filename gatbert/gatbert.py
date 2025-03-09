@@ -157,7 +157,10 @@ class GatbertEmbeddings(torch.nn.Module):
         node_embeddings = self.entity_proj(node_embeddings)
         node_embeddings = node_embeddings * torch.unsqueeze(kb_mask, -1)
 
-        return token_embeddings + node_embeddings
+        summed_embeddings = token_embeddings + node_embeddings
+        summed_embeddings = self.layer_norm(summed_embeddings)
+        summed_embeddings = self.dropout(summed_embeddings)
+        return summed_embeddings
 
 class GatbertModel(torch.nn.Module):
     def __init__(self, config: GatbertConfig):
