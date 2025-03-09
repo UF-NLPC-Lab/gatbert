@@ -50,18 +50,6 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
     else:
         raise ValueError(f"Invalid sample type {type(sample)}")
 
-def extract_kb_edges(sample: GraphSample) -> torch.Tensor:
-    orig_text_nodes = len(sample.target) + len(sample.context)
-    # Only keep edges between two graph concepts
-    iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
-    iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge) 
-    edge_indices = sorted(iter_edge)
-    if edge_indices:
-        edge_indices = torch.tensor(edge_indices).transpose(1, 0)
-    else:
-        edge_indices = torch.empty([4, 0], dtype=torch.int)
-    return edge_indices
-
 def collate_ids(tokenizer: PreTrainedTokenizerFast,
                 samples: List[TensorDict],
                 return_attention_mask: bool = False) -> TensorDict:

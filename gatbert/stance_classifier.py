@@ -327,6 +327,18 @@ class ConcatClassifier(StanceClassifier):
             assert isinstance(sample, GraphSample)
 
             input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
+            num_kb_nodes = input_ids.shape[-1]
+            orig_text_nodes = len(sample.target) + len(sample.context)
+            # Only keep edges between two graph concepts
+            iter_edge = filter(lambda e: e.head_node_index >= orig_text_nodes and e.tail_node_index >= orig_text_nodes, sample.edges)
+            iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge)
+            # Filter out edges pointing to truncated nodes
+            iter_edge = filter(lambda e: e[1] < num_kb_nodes and e[2] < num_kb_nodes, iter_edge)
+            edge_indices = sorted(iter_edge)
+            if edge_indices:
+                edge_indices = torch.tensor(edge_indices).transpose(1, 0)
+            else:
+                edge_indices = torch.empty([4, 0], dtype=torch.int)
 
             text_encoding = encode_text(self.__tokenizer, sample, tokenizer_kwargs={"return_special_tokens_mask": True})
 
@@ -344,8 +356,8 @@ class ConcatClassifier(StanceClassifier):
             target_text_mask = torch.logical_and(cls_ind < all_inds, all_inds < sep_ind)
             context_text_mask = torch.logical_and(sep_ind < all_inds, all_inds < end_ind)
 
-            target_node_mask = self.get_target_seeds_mask(sample)
-            context_node_mask = self.get_context_seeds_mask(sample)
+            target_node_mask = self.get_target_seeds_mask(sample)[..., :num_kb_nodes]
+            context_node_mask = self.get_context_seeds_mask(sample)[..., :num_kb_nodes]
             return {
                 "text": text_encoding,
                 "target_text_mask": target_text_mask,
@@ -354,7 +366,7 @@ class ConcatClassifier(StanceClassifier):
                 "input_ids": input_ids,
                 "target_node_mask": target_node_mask,
                 "context_node_mask": context_node_mask,
-                "edge_indices": extract_kb_edges(sample),
+                "edge_indices": edge_indices,
                 "stance": torch.tensor([sample.stance.value]),
             }
     
