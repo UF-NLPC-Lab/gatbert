@@ -19,13 +19,16 @@ class CgcnNodeUpdate(torch.nn.Module):
         self.comp = comp
         self.n_relations = n_relations
         self.out_dim = out_dim
-        pass
+
+        self.postprocess = torch.nn.Sequential(
+           torch.nn.Dropout(0.1),  # Using default value from original CompGCN code
+           torch.nn.BatchNorm1d(out_dim),
+           torch.nn.Tanh()
+        )
 
     def forward(self, node_states, edge_indices, rel_states):
         (batch_size, num_nodes) = node_states.shape[:2]
         device = node_states.device
-
-        # return node_states
 
         comps = self.comp(node_states[edge_indices[0], edge_indices[2]], rel_states[edge_indices[3]] )
         comps = self.proj(comps)
@@ -57,8 +60,10 @@ class CgcnNodeUpdate(torch.nn.Module):
         neighborhood_counts = uncoalesced_counts.coalesce().to_dense()
 
         # Need the epsilon addition to avoid divide-by-zero error
-        average = summed / (torch.unsqueeze(neighborhood_counts, -1) + 1e-6)
-        return average
+        node_states = summed / (torch.unsqueeze(neighborhood_counts, -1) + 1e-6)
+        # Need the transpose for the batch normalization
+        node_states = self.postprocess(node_states.transpose(-2, -1)).transpose(-2, -1)
+        return node_states
 
 class Cgcn(torch.nn.Module):
     def __init__(self,
@@ -74,6 +79,7 @@ class Cgcn(torch.nn.Module):
         self.relation_projects = torch.nn.ModuleList(
             [torch.nn.Linear(hidden_size, hidden_size, bias=False) for _ in range(n_layers)]
         )
+        self.node_dropout = torch.nn.Dropout(0.3) # Default value from CompGCN code
     
     def forward(self,
                 node_states,
@@ -81,6 +87,6 @@ class Cgcn(torch.nn.Module):
                 relation_states):
         for (graph_layer, rel_proj) in zip(self.graph_layers, self.relation_projects):
             node_states = graph_layer(node_states, edge_indices, relation_states)
-            # FIXME: Need an activation function for the node_states
+            node_states = self.node_dropout(node_states)
             relation_states = rel_proj(relation_states)
         return node_states, relation_states
