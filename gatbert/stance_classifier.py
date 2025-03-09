@@ -113,7 +113,7 @@ class HybridClassifier(StanceClassifier):
                                        truncation='longest_first')
             device = tokenized_text['input_ids'].device
 
-            kb_input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb]], dtype=torch.int64)
+            kb_input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
             num_kb_nodes = kb_input_ids.shape[-1]
 
             # Combine input ids
@@ -324,6 +324,7 @@ class ConcatClassifier(StanceClassifier):
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
 
+            # FIXME: Need to trim to :MAX_KB_NODES here as well
             input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb]], dtype=torch.int64)
 
             text_encoding = encode_text(self.__tokenizer, sample, tokenizer_kwargs={"return_special_tokens_mask": True})
