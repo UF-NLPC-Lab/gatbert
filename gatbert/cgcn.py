@@ -56,7 +56,8 @@ class CgcnNodeUpdate(torch.nn.Module):
         )
         neighborhood_counts = uncoalesced_counts.coalesce().to_dense()
 
-        average = summed / torch.unsqueeze(neighborhood_counts, -1)
+        # Need the epsilon addition to avoid divide-by-zero error
+        average = summed / (torch.unsqueeze(neighborhood_counts, -1) + 1e-6)
         return average
 
 class Cgcn(torch.nn.Module):
