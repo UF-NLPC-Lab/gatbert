@@ -48,15 +48,12 @@ class CNGraph:
 
     @staticmethod
     def read(path: str):
-        if os.path.isdir(path):
-            return CNGraph.from_pykeen(path)
-        with open(path, 'r') as r:
-            return CNGraph.from_json(json.load(r))
+        assert os.path.isdir(path)
+        return CNGraph.from_pykeen(path)
 
     @staticmethod
     def from_pykeen(pykeen_dir: str):
         pykeen_dir  = pathlib.Path(pykeen_dir)
-        # relation_df = pd.read_csv(pykeen_dir.join('relation_to_id.tsv.gz'), compression='gzip', delimiter='\t')
 
         uri2id = {}
         with open_gzip_or_plain(pykeen_dir.joinpath('entity_to_id.tsv')) as r:
@@ -91,11 +88,3 @@ class CNGraph:
             adj=adj,
             rel2id=rel2id
         )
-
-    @staticmethod
-    def from_json(json_data: Dict[str, Any]):
-        raise NotImplementedError("No longer supported")
-        id2uri = {int(k):v for k,v in json_data['id2uri'].items()}
-        uri2id =  {v:k for k,v in id2uri.items()}
-        adj = {int(k):v for k,v in json_data['adj'].items()}
-        return CNGraph(uri2id=uri2id, id2uri=id2uri, adj=adj)
