@@ -1,14 +1,9 @@
-from typing import Optional
 # 3rd Party
 import torch
 import lightning as L
-from transformers import AutoConfig
 # Local
 from .f1_calc import F1Calc
-from .constants import DEFAULT_MODEL, NUM_CN_RELATIONS, DEFAULT_ATT_TYPE
-from .stance_classifier import TextClassifier, StanceClassifier
-from .config import GatbertConfig
-from .types import AttentionType
+from .stance_classifier import *
 
 class StanceModule(L.LightningModule):
     def __init__(self):
@@ -54,27 +49,30 @@ class StanceModule(L.LightningModule):
         self.log(f"{prefix}_macro_f1", calc.macro_f1)
         calc.reset()
 
+    # FIXME: Figure out the more standard way to do this
+    def on_train_epoch_start(self):
+        self.train()
+    def on_validation_epoch_start(self):
+        self.eval()
+    def on_test_epoch_start(self):
+        self.eval()
 
 class MyStanceModule(StanceModule):
+    """
+    Simple wrapper around my non-Lightning model classes.
+    
+    I want maximum configurability of the model classes,
+    but I also don't want them to depend on Lightning itself.
+    This wrapper allows for that.
+    """
     def __init__(self,
-                 pretrained_model: str = DEFAULT_MODEL,
-                 att_type: AttentionType = DEFAULT_ATT_TYPE,
-                 num_graph_layers: Optional[int] = None,
-                 classifier: type[StanceClassifier] = TextClassifier,
-                 load_pretrained_weights: bool = True,
+                 classifier: StanceClassifier,
     ):
         super().__init__()
         self.save_hyperparameters()
-        model_config = GatbertConfig(
-            AutoConfig.from_pretrained(self.hparams.pretrained_model),
-            n_relations=NUM_CN_RELATIONS,
-            num_graph_layers=self.hparams.num_graph_layers,
-            att_type=self.hparams.att_type,
-            base_model=self.hparams.pretrained_model,
-        )
-        # Can't do self.hparams.classifier like I normally would becaues that's still a string...?
-        self.__classifier: StanceClassifier = classifier(model_config)
-        if self.hparams.load_pretrained_weights:
-            self.__classifier.load_pretrained_weights()
+        self.classifier = classifier
+        # FIXME: Do this in a cleaner way
+        self.train()
     def forward(self, *args, **kwargs):
-        return self.__classifier(*args, **kwargs)
+        return self.classifier(*args, **kwargs)
+

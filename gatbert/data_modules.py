@@ -1,42 +1,63 @@
 # STL
 from __future__ import annotations
 # 3rd Party
-from transformers import AutoTokenizer
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, Tuple, Optional, List
-from .data import MapDataset
-from .preprocessor import Preprocessor
-from .constants import DEFAULT_MODEL, DEFAULT_BATCH_SIZE
+from .data import MapDataset, parse_ez_stance, parse_graph_tsv, parse_semeval, parse_vast
+from .constants import DEFAULT_BATCH_SIZE
 from .stance_classifier import *
 from .types import CorpusType, Transform
+from .utils import map_func_gen
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 classifier: type[StanceClassifier] = TextClassifier,
                  batch_size: int = DEFAULT_BATCH_SIZE,
-                 tokenizer: str = DEFAULT_MODEL,
                  transforms: Optional[List[Transform]] = None
                 ):
         super().__init__()
         self.save_hyperparameters()
 
-        tokenizer_model = AutoTokenizer.from_pretrained(self.hparams.tokenizer, use_fast=True)
-        encoder = classifier.get_encoder(tokenizer_model, transforms)
-        # Protected variables
-        self._preprocessor = Preprocessor(
-            self.hparams.corpus_type, encoder, transforms
-        )
+        if corpus_type == 'graph':
+            parse_fn = parse_graph_tsv
+        elif corpus_type == 'ezstance':
+            parse_fn = parse_ez_stance
+        elif corpus_type == 'semeval':
+            parse_fn = parse_semeval
+        elif corpus_type == 'vast':
+            parse_fn = parse_vast
+        else:
+            raise ValueError(f"Invalid corpus_type {corpus_type}")
+        if transforms:
+            transform_map = {
+                'rm_external': lambda s: s.strip_external() if isinstance(s, GraphSample) else s
+            }
+            for t in transforms:
+                if t in transform_map:
+                    parse_fn = map_func_gen(transform_map[t], parse_fn)
+
+        self.__raw_parse_fn = parse_fn
+        self.__parse_fn = None
+        # Has to be set explicitly (see fit_and_test.py for an example)
+        self.encoder: Encoder = None
+
+    @property
+    def _parse_fn(self):
+        if not self.__parse_fn:
+            if not self.encoder:
+                raise ValueError("Encoder not set")
+            self.__parse_fn = map_func_gen(self.encoder.encode, self.__raw_parse_fn)
+        return self.__parse_fn
 
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
     def _make_val_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
     def _make_test_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self._preprocessor.collate)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
 
 
 class RandomSplitDataModule(StanceDataModule):
@@ -68,7 +89,7 @@ class RandomSplitDataModule(StanceDataModule):
 
     def prepare_data(self):
         for data_path in self.hparams.partitions:
-            self.__data[data_path] = MapDataset(self._preprocessor.parse_file(data_path))
+            self.__data[data_path] = MapDataset(self._parse_fn(data_path))
 
     def setup(self, stage):
         train_dses = []

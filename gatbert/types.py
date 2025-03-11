@@ -7,6 +7,6 @@ CorpusType = Literal['ezstance', 'semeval', 'vast', 'graph']
 
 AttentionType = Literal['edge_as_att', 'trans_key', 'rel_mat', 'hetero']
 
-Transform = Literal['rm_external', 'cls_global_edges']
+Transform = Literal['rm_external']
 
 TensorDict = Dict[str, torch.Tensor]

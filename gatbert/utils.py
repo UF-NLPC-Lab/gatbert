@@ -1,8 +1,41 @@
+from typing import Iterable
+import pathlib
+import os
+import gzip
 import logging
+import operator
 from functools import reduce
 from typing import List, Any
 import time
 from contextlib import contextmanager
+
+@contextmanager
+def open_gzip_or_plain(path: os.PathLike, mode='r'):
+    str_path = str(path)
+    gz_path = str_path if str_path.endswith(".gz") else str_path + ".gz"
+    short_path = str_path[:-3]
+
+    if os.path.exists(gz_path):
+        with gzip.open(gz_path, mode=mode) as f:
+            f = map(lambda row: row.decode(), f)
+            try:
+                yield f
+            finally:
+                pass
+    else:
+        with open(short_path, mode=mode) as f:
+            try:
+                yield f
+            finally:
+                pass
+
+def prod(iterable):
+    return reduce(operator.mul, iterable, 1)
+
+def map_func_gen(f, func):
+    def mapped(*args, **kwargs):
+        return map(f, func(*args, **kwargs))
+    return mapped
 
 def flat_map(f, iterable) -> List[Any]:
     return reduce(lambda a,b: a + b, map(f, iterable), [])

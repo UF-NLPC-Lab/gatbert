@@ -1,6 +1,7 @@
 import enum
 import dataclasses
 from typing import Literal
+import re
 
 
 @enum.unique
@@ -56,6 +57,7 @@ DEFAULT_PG_ARGS = "dbname='conceptnet5' host='127.0.0.1'"
 Default connection arguments for postgres connections
 """
 
+CN_URI_PATT = re.compile(r'/c/en/([^/]+)')
 
 @dataclasses.dataclass
 class Relation:
