@@ -32,14 +32,14 @@ Our general workflow is to use PyKeen to create the triples files and the node e
 python -m gatbert.embed_kb \
 	-cn conceptnet-assertions-5.7.0-en.csv \
 	--embed TransE \
-	-o /output_dir/for/assertions_and_embeddings
+	-o /conceptnet/data
 ```
 
 Alternatively, if you only want the triples you can omit the `--embed` argument:
 ```bash
 python -m gatbert.embed_kb \
 	-cn conceptnet-assertions-5.7.0-en.csv \
-	-o /my/graph/data/
+	-o /conceptnet/data
 ```
 
 ### Making ConceptNet Graph Samples
@@ -47,8 +47,8 @@ python -m gatbert.embed_kb \
 Then you can use the extracted graph to make graph-based samples (from both training and other partitions):
 ```bash
 conda activate gatbert
-python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_train_all_onecol.csv --graph /my/graph/data -o train_graph.tsv
-python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_val_all_onecol.csv   --graph /my/graph/data -o val_graph.tsv
+python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_train_all_onecol.csv --graph /conceptnet/data -o train_graph.tsv
+python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_val_all_onecol.csv   --graph /conceptnet/data -o val_graph.tsv
 ```
 I'd budget an hour for this process.
 
@@ -75,25 +75,25 @@ run_exp \
 
 run_exp \
 	-c sample_configs/base.yaml \
-	--data sample_configs/graph_data.yaml \
+	--data sample_configs/tagged_data.yaml \
 	--model.classifier gatbert.stance_classifier.ConcatClassifier \
-	--model.classifier.graph /my/graph/data \
+	--model.classifier.graph /conceptnet/data \
 	--model.classifier.graph_model cgcn \
 	--trainer.logger.init_args.version two_model_cgcn_$(date +%s)
 
 run_exp \
 	-c sample_configs/base.yaml \
-	--data sample_configs/graph_data.yaml \
+	--data sample_configs/tagged_data.yaml \
 	--model.classifier gatbert.stance_classifier.ConcatClassifier \
-	--model.classifier.graph /my/graph/data \
+	--model.classifier.graph /conceptnet/data \
 	--model.classifier.graph_model gat \
 	--trainer.logger.init_args.version two_model_gat_$(date +%s)
 
 run_exp \
 	-c sample_configs/base.yaml \
-	--data sample_configs/graph_data.yaml \
+	--data sample_configs/tagged_data.yaml \
 	--model.classifier gatbert.stance_classifier.HybridClassifier \
-	--model.classifier.graph /my/graph/data \
+	--model.classifier.graph /conceptnet/data \
 	--trainer.logger.init_args.version hybrid_$(date +%s)
 ```
 
