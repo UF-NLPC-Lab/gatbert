@@ -1,5 +1,5 @@
 import abc
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Tuple
 import os
 import copy
 # 3rd Party
@@ -14,6 +14,19 @@ from .config import GatbertConfig
 from .encoder import *
 from .graph import *
 from .cgcn import Cgcn
+
+def load_kb_embeddings(graph_path: os.PathLike) -> Tuple[torch.Tensor, torch.Tensor]:
+    entity_embeddings =  torch.load(get_entity_embeddings(graph_path), weights_only=False)
+    rel_path = get_relation_embeddings(graph_path)
+    expected_relations = len(CNGraph.read_relations(graph_path))
+    if os.path.exists(rel_path):
+        rel_embeddings = torch.load(rel_path, weights_only=False) if os.path.exists(graph_path) else None
+        assert len(rel_embeddings.weight.shape) == 2
+        assert rel_embeddings.shape[0] == expected_relations
+        assert rel_embeddings.shape[1] == entity_embeddings.weight.shape[1]
+    else:
+        rel_embeddings = torch.nn.Embedding(expected_relations,entity_embeddings.weight.shape[1],  bias=False)
+    return entity_embeddings, rel_embeddings
 
 class StanceClassifier(torch.nn.Module):
 
@@ -214,12 +227,9 @@ class ConcatClassifier(StanceClassifier):
 
         self.bert = BertModel.from_pretrained(pretrained_model)
 
-        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph), weights_only=False)
-        self.relation_embeddings: torch.nn.Embedding = torch.load(get_relation_embeddings(graph), weights_only=False)
+        self.entity_embeddings, self.relation_embeddings = load_kb_embeddings(graph)
         (_, self.entity_embed_dim) = self.entity_embeddings.weight.shape
-        assert len(self.relation_embeddings.weight.shape) == 2
         (self.n_relations, self.relation_embed_dim) = self.relation_embeddings.weight.shape
-        assert self.entity_embed_dim == self.relation_embed_dim
 
         if graph_model == 'gat':
             gat_config = GatbertConfig(

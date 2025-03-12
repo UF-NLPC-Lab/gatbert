@@ -50,7 +50,7 @@ conda activate gatbert
 python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_train_all_onecol.csv --graph /conceptnet/data -o train_graph.tsv
 python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_val_all_onecol.csv   --graph /conceptnet/data -o val_graph.tsv
 ```
-I'd budget an hour for this process.
+I'd budget four hours for this process (some datasets are larger than others.)
 
 
 ## Running Experiments

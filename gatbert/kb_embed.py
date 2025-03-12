@@ -8,18 +8,13 @@ from typing import Tuple
 import torch
 from pykeen.datasets import ConceptNet
 from pykeen.pipeline import pipeline
-from pykeen.models import TransE
+from pykeen.models import ConvE, DistMult, ProjE, PairRE, TransE, TransF, TransH, TransR
 from pykeen.utils import set_random_seed
 # Local
 from .graph import get_entity_embeddings, get_relation_embeddings
 
-def extract_transe(model: TransE) -> Tuple[torch.nn.Embedding, torch.nn.Embedding]:
-    return model.entity_representations[0]._embeddings, model.relation_representations[0]._embeddings
-
-def extract_embeddings(model) -> Tuple[torch.nn.Embedding, torch.nn.Embedding]:
-    if isinstance(model, TransE):
-        return extract_transe(model)
-    raise ValueError(f"Unsupported type {type(model)}")
+SIMPLE_ENTITY_EMBEDDINGS = (ConvE, DistMult, PairRE, ProjE, TransE, TransF, TransH, TransR,)
+SIMPLE_REL_EMBEDDINGS = (TransE,)
 
 def main(raw_args):
     parser = argparse.ArgumentParser(description="Generate graph embeddings")
@@ -29,12 +24,18 @@ def main(raw_args):
     parser.add_argument("--embed", metavar='TransE',
                         help="Embedding type. Don't specify to just get all the relation triples")
     parser.add_argument("--dim", metavar="50", type=int, default=50, help="Embedding dimensionality")
+    parser.add_argument("--epochs", metavar="5", type=int, default=5, help="Embedding dimensionality")
+
+    parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping")
+    parser.add_argument("--freq", metavar="10", type=int, default=10, help="Embedding dimensionality")
+    parser.add_argument("--patience", metavar="2", type=int, default=2, help="Embedding dimensionality")
+
     parser.add_argument("-o", metavar="output_dir/",
                         help="Output directory containing all the triples, and a torch.nn.Embedding save model")
     parser.add_argument("--seed", type=int, default=1, metavar="1", help="Random seed for pykeen")
     args = parser.parse_args(raw_args)
 
-    assert args.embed is None or args.embed in {'TransE'}
+    assert args.embed is None or any(args.embed in cls.__name__ for cls in SIMPLE_ENTITY_EMBEDDINGS)
 
     set_random_seed(args.seed)
     create_inverse_triples = True
@@ -43,18 +44,25 @@ def main(raw_args):
     os.makedirs(args.o, exist_ok=True)
     out_path = pathlib.Path(args.o)
     if args.embed:
+        kwargs = {}
+        if args.early_stopping:
+            kwargs['stopper'] = "early"
+            kwargs['stopper_kwargs'] = {"frequency": args.freq, "patience": args.patience}
         pipeline_res = pipeline(
             dataset=ds,
             model=args.embed,
             model_kwargs={"embedding_dim": args.dim},
             random_seed=args.seed,
-            stopper="early",
-            stopper_kwargs={"frequency": 5, "patience": 2},
-            training_kwargs={"num_epochs": 100}
+            training_kwargs={"num_epochs": args.epochs},
+            **kwargs
         )
-        entity_embeddings, relation_embeddings = extract_embeddings(pipeline_res.model)
-        torch.save(entity_embeddings, get_entity_embeddings(out_path))
-        torch.save(relation_embeddings, get_relation_embeddings(out_path))
+        model = pipeline_res.model
+        if isinstance(model, SIMPLE_ENTITY_EMBEDDINGS):
+            torch.save(model.entity_representations[0]._embeddings, get_entity_embeddings(out_path))
+        else:
+            raise ValueError(f"Unsupported type {type(model)}")
+        if isinstance(model, SIMPLE_REL_EMBEDDINGS):
+            torch.save(model.relation_representations[0]._embeddings, get_relation_embeddings(out_path))
 
         pipeline_res.save_to_directory(
             out_path,
