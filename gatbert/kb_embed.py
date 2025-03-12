@@ -48,6 +48,9 @@ def main(raw_args):
             model=args.embed,
             model_kwargs={"embedding_dim": args.dim},
             random_seed=args.seed,
+            stopper="early",
+            stopper_kwargs={"frequency": 5, "patience": 2},
+            training_kwargs={"num_epochs": 100}
         )
         entity_embeddings, relation_embeddings = extract_embeddings(pipeline_res.model)
         torch.save(entity_embeddings, get_entity_embeddings(out_path))
@@ -58,7 +61,7 @@ def main(raw_args):
             # The "replicates" is the model file. Already doing that manually above
             save_replicates=False, 
             # Also already saving the training triples (along with the val and test ones) manually below
-            save_training=False
+            save_training=False,
         )
 
     concat_tripples = torch.concatenate([
