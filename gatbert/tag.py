@@ -12,7 +12,7 @@ from itertools import islice
 from tqdm import tqdm
 # Local
 from .constants import DEFAULT_MAX_DEGREE
-from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize
+from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize, parse_vast
 from .graph_sample import GraphSample
 from .graph import CNGraph
 from .utils import time_block
@@ -164,7 +164,7 @@ def main(raw_args=None):
     if args.ezstance:
         sample_gen = parse_ez_stance(args.ezstance)
     elif args.vast:
-        raise RuntimeError("--vast not yet supported")
+        sample_gen = parse_vast(args.vast)
     else:
         raise RuntimeError("--semeval not yet supported")
 

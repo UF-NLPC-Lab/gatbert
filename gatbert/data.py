@@ -54,7 +54,14 @@ def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
         yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']]), csv.DictReader(r))
 
 def parse_vast(csv_path) -> Generator[Sample, None, None]:
-    raise NotImplementedError
+    strstance2enum = {
+       "0": Stance.AGAINST,
+       "1": Stance.FAVOR,
+       "2": Stance.NONE
+    }
+    # TODO: Do we still want to use "post", or one of their preprocessed versions?
+    with open(csv_path, 'r', encoding='latin-1') as r:
+        yield from map(lambda row: Sample(row['post'], row['topic_str'], strstance2enum[row['label']]), csv.DictReader(r))
 
 def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
     raise NotImplementedError
