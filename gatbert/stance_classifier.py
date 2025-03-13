@@ -15,11 +15,11 @@ from .encoder import *
 from .graph import *
 from .cgcn import Cgcn
 
-def load_kb_embeddings(graph_path: os.PathLike) -> Tuple[torch.Tensor, torch.Tensor]:
+def load_kb_embeddings(graph_path: os.PathLike, pretrained_relations=False) -> Tuple[torch.Tensor, torch.Tensor]:
     entity_embeddings =  torch.load(get_entity_embeddings(graph_path), weights_only=False)
     rel_path = get_relation_embeddings(graph_path)
     expected_relations = len(CNGraph.read_relations(graph_path))
-    if os.path.exists(rel_path):
+    if pretrained_relations and os.path.exists(rel_path):
         rel_embeddings = torch.load(rel_path, weights_only=False) if os.path.exists(graph_path) else None
         assert len(rel_embeddings.weight.shape) == 2
         assert rel_embeddings.weight.shape[0] == expected_relations
@@ -217,7 +217,8 @@ class ConcatClassifier(StanceClassifier):
                  graph: os.PathLike,
                  pretrained_model: str = DEFAULT_MODEL,
                  graph_model: Literal['cgcn', 'gat'] = 'gat',
-                 num_graph_layers: int = 2):
+                 num_graph_layers: int = 2,
+                 pretrained_relations: bool = False):
         """
         Args:
             pretrained_model_name: model to load for text portion of the model
@@ -227,7 +228,7 @@ class ConcatClassifier(StanceClassifier):
 
         self.bert = BertModel.from_pretrained(pretrained_model)
 
-        self.entity_embeddings, self.relation_embeddings = load_kb_embeddings(graph)
+        self.entity_embeddings, self.relation_embeddings = load_kb_embeddings(graph, pretrained_relations)
         (_, self.entity_embed_dim) = self.entity_embeddings.weight.shape
         (self.n_relations, self.relation_embed_dim) = self.relation_embeddings.weight.shape
 
