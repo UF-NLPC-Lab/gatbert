@@ -22,10 +22,10 @@ def load_kb_embeddings(graph_path: os.PathLike) -> Tuple[torch.Tensor, torch.Ten
     if os.path.exists(rel_path):
         rel_embeddings = torch.load(rel_path, weights_only=False) if os.path.exists(graph_path) else None
         assert len(rel_embeddings.weight.shape) == 2
-        assert rel_embeddings.shape[0] == expected_relations
-        assert rel_embeddings.shape[1] == entity_embeddings.weight.shape[1]
+        assert rel_embeddings.weight.shape[0] == expected_relations
+        assert rel_embeddings.weight.shape[1] == entity_embeddings.weight.shape[1]
     else:
-        rel_embeddings = torch.nn.Embedding(expected_relations,entity_embeddings.weight.shape[1],  bias=False)
+        rel_embeddings = torch.nn.Embedding(expected_relations,entity_embeddings.weight.shape[1])
     return entity_embeddings, rel_embeddings
 
 class StanceClassifier(torch.nn.Module):
