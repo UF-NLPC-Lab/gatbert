@@ -2,16 +2,13 @@
 import os
 import pathlib
 import argparse
-from itertools import starmap, islice
 # 3rd Party
-import torch
-from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertModel, BertForMaskedLM
-from transformers import DataCollatorForLanguageModeling, EarlyStoppingCallback
+from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForMaskedLM
+from transformers import DataCollatorForLanguageModeling
 from datasets import Dataset
 from tqdm import tqdm
 from pykeen.datasets import ConceptNet
 # Local
-from .utils import time_block
 from .constants import DEFAULT_MODEL
 from .pykeen_utils import save_all_triples
 from .graph import CNGraph
@@ -38,34 +35,43 @@ if __name__ == "__main__":
     # A bit inefficient to re-read the entities we just wrote to disk,
     # but good enough for now
     uri2id = CNGraph.read_entitites(args.d)
-    uri2id = sorted(uri2id.items(), key = lambda pair: pair[1])
-    uris = list(uri2id.keys())
+    uris = [uri for uri, _ in sorted(uri2id.items(), key = lambda pair: pair[1])]
 
     os.environ['TOKENIZERS_PARALLELISM'] = "false"
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(args.pretrained)
     tokenizer.save_pretrained(args.d)
 
-    samples = starmap(lambda uri, _: tokenizer(text=pretokenize_cn_uri(uri), is_split_into_words=True, return_special_tokens_mask=True), tqdm(uri2id))
-    samples = list(samples)
-    ds = Dataset.from_list(samples)
-    splits = ds.train_test_split(seed=0)
+    # From the HF tutorial--still don't understand why
+    ds = Dataset.from_list([tokenizer(text=pretokenize_cn_uri(uri), is_split_into_words=True, return_special_tokens_mask=True) for uri in tqdm(uris)])
+    # splits = ds.train_test_split(seed=0)
 
     trainer_args = TrainingArguments(
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        save_strategy="steps",
+        save_steps=.25,
         learning_rate=1e-5,
-        num_train_epochs=100,
-        metric_for_best_model='loss',
-        load_best_model_at_end=True
+        num_train_epochs=1,
     )
+
+    # If we have a batch where no token is masked,
+    # then the loss will be nan.
+    # So we set the mlm_probability to 1,
+    # but only perform actual masking quite rarely
+    mlm_probability = .15 #1.
+    collator = DataCollatorForLanguageModeling(
+        tokenizer,
+        # mlm_probability=mlm_probability,
+        # mask_replace_prob=.8*.15/mlm_probability,
+        # random_replace_prob=.1*.15/mlm_probability
+    )
+
     model = BertForMaskedLM.from_pretrained(args.pretrained)
     trainer = Trainer(
         model=model,
         args=trainer_args,
-        train_dataset=splits['train'],
-        eval_dataset=splits['test'],
-        callbacks=[EarlyStoppingCallback(3)],
-        data_collator=DataCollatorForLanguageModeling(tokenizer)
+        train_dataset=ds,
+        # eval_dataset=splits['test'],
+        # callbacks=[EarlyStoppingCallback(3)],
+        data_collator=collator
     )
     trainer.train()
     trainer.save_model(args.d)
