@@ -15,6 +15,7 @@ from .utils import time_block
 from .constants import DEFAULT_MODEL
 from .pykeen_utils import save_all_triples
 from .graph import CNGraph
+from .encoder import pretokenize_cn_uri
 
 
 if __name__ == "__main__":
@@ -38,13 +39,13 @@ if __name__ == "__main__":
     # but good enough for now
     uri2id = CNGraph.read_entitites(args.d)
     uri2id = sorted(uri2id.items(), key = lambda pair: pair[1])
+    uris = list(uri2id.keys())
 
     os.environ['TOKENIZERS_PARALLELISM'] = "false"
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(args.pretrained)
     tokenizer.save_pretrained(args.d)
 
-    samples = starmap(lambda uri, _: tokenizer(text=uri.split('_'), is_split_into_words=True, return_special_tokens_mask=True), tqdm(uri2id))
-    samples = islice(samples, 256)
+    samples = starmap(lambda uri, _: tokenizer(text=pretokenize_cn_uri(uri), is_split_into_words=True, return_special_tokens_mask=True), tqdm(uri2id))
     samples = list(samples)
     ds = Dataset.from_list(samples)
     splits = ds.train_test_split(seed=0)
@@ -52,14 +53,8 @@ if __name__ == "__main__":
     trainer_args = TrainingArguments(
         eval_strategy="epoch",
         save_strategy="epoch",
-
-        # eval_strategy='steps',
-        # eval_steps=5,
-        # logging_strategy='steps',
-        # logging_steps=5,
-
         learning_rate=1e-5,
-        num_train_epochs=1, #100,
+        num_train_epochs=100,
         metric_for_best_model='loss',
         load_best_model_at_end=True
     )

@@ -1,5 +1,6 @@
 # STL
 from typing import List, Tuple, Dict, Iterable
+import re
 import abc
 from collections import defaultdict, OrderedDict
 import logging
@@ -71,3 +72,6 @@ def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:
         s[0, :] = i
         batched.append(s)
     return torch.concatenate(batched, dim=-1)
+
+def pretokenize_cn_uri(uri: str) -> List[str]:
+    return uri.split('/')[3].split('_')
