@@ -13,7 +13,7 @@ from contextlib import contextmanager
 def open_gzip_or_plain(path: os.PathLike, mode='r'):
     str_path = str(path)
     gz_path = str_path if str_path.endswith(".gz") else str_path + ".gz"
-    short_path = str_path[:-3]
+    short_path = gz_path[:-3]
 
     if os.path.exists(gz_path):
         with gzip.open(gz_path, mode=mode) as f:

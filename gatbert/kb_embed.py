@@ -11,6 +11,7 @@ from pykeen.pipeline import pipeline
 from pykeen.models import ConvE, DistMult, ProjE, PairRE, TransE, TransF, TransH, TransR
 from pykeen.utils import set_random_seed
 # Local
+from .pykeen_utils import save_all_triples
 from .graph import get_entity_embeddings, get_relation_embeddings
 
 SIMPLE_ENTITY_EMBEDDINGS = (ConvE, DistMult, PairRE, ProjE, TransE, TransF, TransH, TransR,)
@@ -71,16 +72,7 @@ def main(raw_args):
             # Also already saving the training triples (along with the val and test ones) manually below
             save_training=False,
         )
-
-    concat_tripples = torch.concatenate([
-        ds.training.mapped_triples,
-        ds.validation.mapped_triples,
-        ds.testing.mapped_triples
-    ])
-    concatenated_factory = ds.training.clone_and_exchange_triples(
-        mapped_triples=concat_tripples
-    )
-    concatenated_factory.to_path_binary(out_path)
+    save_all_triples(ds, out_path)
 
 
 

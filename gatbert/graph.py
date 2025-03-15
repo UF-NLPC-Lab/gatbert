@@ -52,6 +52,17 @@ class CNGraph:
         return CNGraph.from_pykeen(path)
 
     @staticmethod
+    def read_entitites(dir_or_path: os.PathLike):
+        dir_or_path = pathlib.Path(dir_or_path)
+        entity_path = dir_or_path.joinpath("entity_to_id.tsv") if os.path.isdir(dir_or_path) else dir_or_path
+        uri2id = {}
+        with open_gzip_or_plain(entity_path) as r:
+            reader = csv.DictReader(r, delimiter='\t')
+            for row in reader:
+                uri2id[row['label']] = int(row['id'])
+        return uri2id
+
+    @staticmethod
     def read_relations(pykeen_dir: os.PathLike):
         rel2id = {}
         with open_gzip_or_plain(pathlib.Path(pykeen_dir).joinpath("relation_to_id.tsv")) as r:
@@ -67,11 +78,7 @@ class CNGraph:
     def from_pykeen(pykeen_dir: str):
         pykeen_dir  = pathlib.Path(pykeen_dir)
 
-        uri2id = {}
-        with open_gzip_or_plain(pykeen_dir.joinpath('entity_to_id.tsv')) as r:
-            reader = csv.DictReader(r, delimiter='\t')
-            for row in reader:
-                uri2id[row['label']] = int(row['id'])
+        uri2id = CNGraph.read_entitites(pykeen_dir)
         id2uri = {v:k for (k, v) in uri2id.items()}
 
         # TODO: don't use pandas for this
