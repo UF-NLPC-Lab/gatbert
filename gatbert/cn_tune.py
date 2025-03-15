@@ -41,6 +41,7 @@ if __name__ == "__main__":
 
     os.environ['TOKENIZERS_PARALLELISM'] = "false"
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(args.pretrained)
+    tokenizer.save_pretrained(args.d)
 
     samples = starmap(lambda uri, _: tokenizer(text=uri.split('_'), is_split_into_words=True, return_special_tokens_mask=True), tqdm(uri2id))
     samples = islice(samples, 256)
