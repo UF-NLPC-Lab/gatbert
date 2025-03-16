@@ -48,8 +48,8 @@ if __name__ == "__main__":
     trainer_args = TrainingArguments(
         save_strategy="steps",
         save_steps=.25,
-        learning_rate=1e-5,
-        num_train_epochs=1,
+        learning_rate=5e-5,
+        num_train_epochs=4,
     )
 
     # If we have a batch where no token is masked,
