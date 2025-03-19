@@ -1,5 +1,5 @@
 import torch
-from .constants import TOKEN_TO_TOKEN_RELATION_ID
+from .constants import SpecialRelation
 
 IDENTITY_BASIS = 0
 
@@ -17,8 +17,8 @@ class RelationMatrixEmbeddings(torch.nn.Module):
         self.coefficients = torch.nn.Embedding(n_relations, num_bases)
         coeff_data = self.coefficients.weight.data
         coeff_data[:, IDENTITY_BASIS] = 0
-        coeff_data[TOKEN_TO_TOKEN_RELATION_ID, :] = 0
-        coeff_data[TOKEN_TO_TOKEN_RELATION_ID, IDENTITY_BASIS] = 1
+        coeff_data[SpecialRelation.TOKEN_TO_TOKEN.value, :] = 0
+        coeff_data[SpecialRelation.TOKEN_TO_TOKEN.value, IDENTITY_BASIS] = 1
 
 
     def forward(self, edge_indices: torch.Tensor, batch_size: int, n_nodes: int):

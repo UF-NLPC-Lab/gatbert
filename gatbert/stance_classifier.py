@@ -1,15 +1,14 @@
 import abc
 from typing import List, Optional, Literal, Tuple
+from itertools import product
 import os
-import copy
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, AutoConfig
 from transformers.models.bert.modeling_bert import BertConfig
 # Local
-from .types import Transform
 from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
-from .constants import Stance, NodeType, DEFAULT_MODEL
+from .constants import Stance, NodeType, DEFAULT_MODEL, MAX_KB_NODES, SpecialRelation
 from .config import GatbertConfig
 from .encoder import *
 from .graph import *
@@ -115,6 +114,7 @@ class HybridClassifier(StanceClassifier):
                      graph: CNGraph):
             self.__tokenizer = tokenizer
             self.__graph = graph
+            self.__total_relations = len(graph.rel2id) + len(SpecialRelation)
 
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
@@ -165,7 +165,7 @@ class HybridClassifier(StanceClassifier):
             # Need a 0 at the beginning for batch
             new_edges = []
             # The original token-to-token edges of a standard BERT model
-            new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(new_text_nodes), range(new_text_nodes)))
+            new_edges.extend((0, head, tail, SpecialRelation.TOKEN_TO_TOKEN.value) for (head, tail) in product(range(new_text_nodes), range(new_text_nodes)))
             # The KB edges, with indices adjusted
             max_node_index = orig_text_nodes + num_kb_nodes
             for e in sample.edges:
@@ -183,6 +183,9 @@ class HybridClassifier(StanceClassifier):
                     continue
                 new_edges.extend((0, head, tail, e.relation_id) for (head, tail) in product(head_list, tail_list))
 
+            # Ensure no negative rel indices
+            new_edges = [(*others, rel % self.__total_relations) for (*others, rel) in new_edges]
+            # When we use these in sparse_coo arrays later, they'll need to be sorted
             new_edges.sort()
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
 
