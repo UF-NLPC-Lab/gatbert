@@ -1,5 +1,6 @@
 # STL
 import sys
+import gc
 import os
 import pathlib
 import argparse
@@ -32,9 +33,10 @@ if __name__ == "__main__":
     os.makedirs(args.d, exist_ok=True)
 
     if args.cn is not None:
-        pykeen_ds = ConceptNet(name=args.cn, create_inverse_triples=True)
-        save_all_triples(pykeen_ds, args.d)
-        del pykeen_ds
+        save_all_triples(ConceptNet(name=args.cn, create_inverse_triples=True), args.d)
+        # Just to be safe; don't want that memory lingering since we've had memory issues
+        # with saving model weights at the end
+        gc.collect()
 
     # A bit inefficient to re-read the entities we just wrote to disk,
     # but good enough for now
@@ -115,20 +117,32 @@ if __name__ == "__main__":
 
     # From the HF tutorial--still don't understand why
     ds = Dataset.from_list([encode(*sample) for sample in tqdm(sample_ids, desc="Tokenization")])
-    splits = ds.train_test_split()
+    splits = ds.train_test_split(seed=0)
+
+    class CustomCollator(DataCollatorForLanguageModeling):
+        def torch_mask_tokens(self, inputs, special_tokens_mask = None):
+            new_inputs, new_labels = super().torch_mask_tokens(inputs, special_tokens_mask)
+            # return new_inputs, new_labels
+            # Always make sure at least one token is not set to -100
+            # Otherwise we get NaN losses
+            # We know the first token is CLS, so it's an easy guess
+            # First token of the first sample
+            index = tuple(0 for _ in new_inputs.shape)
+            new_labels[index] = inputs[index]
+            return new_inputs, new_labels
 
     trainer_args = TrainingArguments(
         save_strategy="steps",
-        # save_steps=.25,
-        save_steps=5,
+        save_steps=.10,
 
         eval_strategy='steps',
-        eval_steps=5,
+        eval_steps=.10,
 
         learning_rate=5e-5,
-        num_train_epochs=4,
+        num_train_epochs=5,
 
-        metric_for_best_model='loss'
+        metric_for_best_model='loss',
+        load_best_model_at_end=True
     )
 
     model = BertForPreTraining.from_pretrained(args.pretrained)
@@ -137,8 +151,8 @@ if __name__ == "__main__":
         args=trainer_args,
         train_dataset=splits['train'],
         eval_dataset=splits['test'],
-        callbacks=[EarlyStoppingCallback(1)],
-        data_collator=DataCollatorForLanguageModeling(tokenizer)
+        callbacks=[EarlyStoppingCallback(3)],
+        data_collator=CustomCollator(tokenizer)
     )
     trainer.train()
     trainer.save_model(args.d)
