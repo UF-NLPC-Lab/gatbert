@@ -4,7 +4,8 @@ import os
 import pathlib
 import argparse
 # 3rd Party
-from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForPreTraining
+import torch
+from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForPreTraining, EarlyStoppingCallback
 from transformers import DataCollatorForLanguageModeling
 from datasets import Dataset
 from tqdm import tqdm
@@ -38,22 +39,15 @@ if __name__ == "__main__":
     # A bit inefficient to re-read the entities we just wrote to disk,
     # but good enough for now
     graph = CNGraph.from_pykeen(args.d)
-
-    uri2id = graph.uri2id
     id2uri = graph.id2uri
 
     rng = np.random.default_rng(seed=0)
 
-    # Construct two samples per-entity
-    node_ids = sorted(id2uri.keys())
-    # Limiting this for debugging
-    node_ids = node_ids[:5000]
-
+    node_ids = sorted(id2uri)
     desired_pos = len(node_ids)
-    desired_neg = len(node_ids)
+    desired_neg = desired_pos
 
-    with time_block("all_pos"):
-        all_pos = {(head, tail) for (head, edges) in graph.adj.items() for (tail, _) in edges}
+    all_pos = {(head, tail) for (head, edges) in graph.adj.items() for (tail, _) in edges}
     if len(all_pos) < desired_pos:
         print(f"Not enough edges to meet quota. Reducing number of positive samples to {len(all_pos)}")
         desired_pos = len(all_pos)
@@ -83,57 +77,68 @@ if __name__ == "__main__":
         islands = [node_id for node_id in node_ids if node_id not in graph.adj]
         i = 0
         while i < len(islands) and len(chosen_neg) < desired_neg:
+            # This loop has never actually run because our dataset has no islands (but yours might)
             head = islands[i]
             tail = rng.choice(non_islands)
             chosen_neg.add((head, tail))
             progress_bar.update()
+            i += 1
         # The islands may not have been enough to get to our desired ratio
+        n_nodes = len(node_ids)
         while len(chosen_neg) < desired_neg:
             # Get an edge we don't already have
-            candidate = (rng.choice(node_ids), rng.choice(node_ids))
+            # Turns out rng.choice(n_nodes) is much quicker than rng.choice(node_ids)
+            candidate = (rng.choice(n_nodes), rng.choice(n_nodes))
             while candidate in chosen_pos or candidate in chosen_neg:
                 candidate = (rng.choice(node_ids), rng.choice(node_ids))
             chosen_neg.add(candidate)
             progress_bar.update()
         
-    sys.exit(0)
-
-
     os.environ['TOKENIZERS_PARALLELISM'] = "false"
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(args.pretrained)
     tokenizer.save_pretrained(args.d)
+    id2text = {id : pretokenize_cn_uri(graph.id2uri[id]) for id in node_ids}
+    def encode(head_id, tail_id, nsp_label):
+        encoding = tokenizer(text=id2text[head_id],
+                             text_pair=id2text[tail_id],
+                             is_split_into_words=True,
+                             return_special_tokens_mask=True,
+                             # Setting 'pt' breaks collator?
+                             return_tensors=None
+                             )
+        encoding['next_sentence_label'] = nsp_label
+        return encoding
+
+    # Just to ensure determinacy. Python hashmaps aren't random but implementations can vary
+    sample_ids = [(head, tail, 0) for (head, tail) in sorted(chosen_pos)] + \
+                [(head, tail, 1) for (head, tail) in sorted(chosen_neg)]
 
     # From the HF tutorial--still don't understand why
-    ds = Dataset.from_list([tokenizer(text=pretokenize_cn_uri(uri), is_split_into_words=True, return_special_tokens_mask=True) for uri in tqdm(uris)])
-    # splits = ds.train_test_split(seed=0)
+    ds = Dataset.from_list([encode(*sample) for sample in tqdm(sample_ids, desc="Tokenization")])
+    splits = ds.train_test_split()
 
     trainer_args = TrainingArguments(
         save_strategy="steps",
-        save_steps=.25,
+        # save_steps=.25,
+        save_steps=5,
+
+        eval_strategy='steps',
+        eval_steps=5,
+
         learning_rate=5e-5,
         num_train_epochs=4,
+
+        metric_for_best_model='loss'
     )
 
-    # If we have a batch where no token is masked,
-    # then the loss will be nan.
-    # So we set the mlm_probability to 1,
-    # but only perform actual masking quite rarely
-    mlm_probability = .15 #1.
-    collator = DataCollatorForLanguageModeling(
-        tokenizer,
-        # mlm_probability=mlm_probability,
-        # mask_replace_prob=.8*.15/mlm_probability,
-        # random_replace_prob=.1*.15/mlm_probability
-    )
-
-    model = BertForMaskedLM.from_pretrained(args.pretrained)
+    model = BertForPreTraining.from_pretrained(args.pretrained)
     trainer = Trainer(
         model=model,
         args=trainer_args,
-        train_dataset=ds,
-        # eval_dataset=splits['test'],
-        # callbacks=[EarlyStoppingCallback(3)],
-        data_collator=collator
+        train_dataset=splits['train'],
+        eval_dataset=splits['test'],
+        callbacks=[EarlyStoppingCallback(1)],
+        data_collator=DataCollatorForLanguageModeling(tokenizer)
     )
     trainer.train()
     trainer.save_model(args.d)
