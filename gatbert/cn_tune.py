@@ -1,18 +1,21 @@
 # STL
+import sys
 import os
 import pathlib
 import argparse
 # 3rd Party
-from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForMaskedLM
+from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForPreTraining
 from transformers import DataCollatorForLanguageModeling
 from datasets import Dataset
 from tqdm import tqdm
 from pykeen.datasets import ConceptNet
+import numpy as np
 # Local
 from .constants import DEFAULT_MODEL
 from .pykeen_utils import save_all_triples
 from .graph import CNGraph
 from .encoder import pretokenize_cn_uri
+from .utils import time_block
 
 
 if __name__ == "__main__":
@@ -34,8 +37,67 @@ if __name__ == "__main__":
 
     # A bit inefficient to re-read the entities we just wrote to disk,
     # but good enough for now
-    uri2id = CNGraph.read_entitites(args.d)
-    uris = [uri for uri, _ in sorted(uri2id.items(), key = lambda pair: pair[1])]
+    graph = CNGraph.from_pykeen(args.d)
+
+    uri2id = graph.uri2id
+    id2uri = graph.id2uri
+
+    rng = np.random.default_rng(seed=0)
+
+    # Construct two samples per-entity
+    node_ids = sorted(id2uri.keys())
+    # Limiting this for debugging
+    node_ids = node_ids[:5000]
+
+    desired_pos = len(node_ids)
+    desired_neg = len(node_ids)
+
+    with time_block("all_pos"):
+        all_pos = {(head, tail) for (head, edges) in graph.adj.items() for (tail, _) in edges}
+    if len(all_pos) < desired_pos:
+        print(f"Not enough edges to meet quota. Reducing number of positive samples to {len(all_pos)}")
+        desired_pos = len(all_pos)
+
+    with tqdm(total=desired_pos, desc="Positive NSP Sample Selection") as pos_progress_bar:
+        chosen_pos = set()
+        non_islands = sorted(n for n in node_ids if n in graph.adj)
+        # Round robin allocation of edges from each node
+        while len(chosen_pos) < desired_pos:
+            for node_id in non_islands:
+                edges = graph.adj[node_id]
+                if edges:
+                    # Take a random edge as a sample
+                    index = rng.choice(len(edges))
+                    # And remove it from the graph so we don't use it later
+                    edge = edges.pop(index)
+                    (tail, _) = edge
+
+                    chosen_pos.add( (node_id, tail) )
+                    pos_progress_bar.update()
+                    if len(chosen_pos) >= desired_pos:
+                        break
+
+    with tqdm(total=desired_neg, desc="Negative NSP Sample Selection") as progress_bar:
+        chosen_neg = set()
+        # Node with no edges (recall we add inverse edges, so 0-outdegree also means 0-indegree)
+        islands = [node_id for node_id in node_ids if node_id not in graph.adj]
+        i = 0
+        while i < len(islands) and len(chosen_neg) < desired_neg:
+            head = islands[i]
+            tail = rng.choice(non_islands)
+            chosen_neg.add((head, tail))
+            progress_bar.update()
+        # The islands may not have been enough to get to our desired ratio
+        while len(chosen_neg) < desired_neg:
+            # Get an edge we don't already have
+            candidate = (rng.choice(node_ids), rng.choice(node_ids))
+            while candidate in chosen_pos or candidate in chosen_neg:
+                candidate = (rng.choice(node_ids), rng.choice(node_ids))
+            chosen_neg.add(candidate)
+            progress_bar.update()
+        
+    sys.exit(0)
+
 
     os.environ['TOKENIZERS_PARALLELISM'] = "false"
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(args.pretrained)

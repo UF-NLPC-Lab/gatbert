@@ -91,6 +91,7 @@ class CNGraph:
         for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
             adj[head].append((tail, rel))
             adj[tail].append((head, inv_rel))
+        adj = dict(adj) # If you don't intend any more writes, you should convert your defaultdict to a dict
 
         rel2id = CNGraph.read_relations(pykeen_dir)
 
