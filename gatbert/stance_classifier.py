@@ -253,6 +253,8 @@ class ConcatClassifier(StanceClassifier):
 
         self.pred_head = torch.nn.Linear(2 * self.bert.config.hidden_size + 2 * self.entity_embed_dim, len(Stance), bias=False)
         self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), CNGraph.read(graph))
+
+        self.early_phase = True
     
     def get_encoder(self):
         return self.__encoder
@@ -278,6 +280,9 @@ class ConcatClassifier(StanceClassifier):
         hidden_states = bert_out.last_hidden_state
         target_text_vec = self.masked_average(target_text_mask, hidden_states)
         context_text_vec = self.masked_average(context_text_mask, hidden_states)
+        if self.early_phase:
+            target_text_vec = 0 * target_text_vec
+            context_text_vec = 0 * context_text_vec
         # (2) Encode graph
         node_embeddings = self.entity_embeddings(input_ids)
         if self.model_type == 'cgcn':

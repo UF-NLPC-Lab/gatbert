@@ -69,16 +69,23 @@ class MyStanceModule(StanceModule):
 
         self.__one_training_epoch = False
 
+        self.classifier.early_phase = True
         # Disable BERT optimization for first epoch
-        self.train()
-        self.__temp_frozen = set()
-        for (name, param) in self.classifier.bert.named_parameters():
-            if param.requires_grad:
-                param.requires_grad = False
-                self.__temp_frozen.add(name)
+        # self.__temp_frozen = set()
+        # for (name, param) in self.classifier.bert.named_parameters():
+            # if param.requires_grad:
+                # param.requires_grad = False
+                # self.__temp_frozen.add(name)
 
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
+
+    def on_before_optimizer_step(self, optimizer):
+        if self.__one_training_epoch:
+            for name, param in self.classifier.bert.named_parameters():
+                print(name)
+                print(param.grad)
+        return super().on_before_optimizer_step(optimizer)
 
     # FIXME: Figure out the more standard way to do this
     def on_train_epoch_start(self):
@@ -86,10 +93,12 @@ class MyStanceModule(StanceModule):
 
     def on_train_epoch_end(self):
         if not self.__one_training_epoch:
-            for (name, param) in self.classifier.bert.named_parameters():
-                if name in self.__temp_frozen:
-                    param.requires_grad = True
+            self.classifier.early_phase = False
+            # for (name, param) in self.classifier.bert.named_parameters():
+                # if name in self.__temp_frozen:
+                    # param.requires_grad = True
             self.__one_training_epoch = True
+
     def on_validation_epoch_start(self):
         self.eval()
     def on_test_epoch_start(self):
