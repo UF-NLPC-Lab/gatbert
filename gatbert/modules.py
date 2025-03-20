@@ -49,14 +49,6 @@ class StanceModule(L.LightningModule):
         self.log(f"{prefix}_macro_f1", calc.macro_f1)
         calc.reset()
 
-    # FIXME: Figure out the more standard way to do this
-    def on_train_epoch_start(self):
-        self.train()
-    def on_validation_epoch_start(self):
-        self.eval()
-    def on_test_epoch_start(self):
-        self.eval()
-
 class MyStanceModule(StanceModule):
     """
     Simple wrapper around my non-Lightning model classes.
@@ -71,8 +63,35 @@ class MyStanceModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.classifier = classifier
+        assert isinstance(self.classifier, ConcatClassifier)
         # FIXME: Do this in a cleaner way
         self.train()
+
+        self.__one_training_epoch = False
+
+        # Disable BERT optimization for first epoch
+        self.train()
+        self.__temp_frozen = set()
+        for (name, param) in self.classifier.bert.named_parameters():
+            if param.requires_grad:
+                param.requires_grad = False
+                self.__temp_frozen.add(name)
+
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
+
+    # FIXME: Figure out the more standard way to do this
+    def on_train_epoch_start(self):
+        self.train()
+
+    def on_train_epoch_end(self):
+        if not self.__one_training_epoch:
+            for (name, param) in self.classifier.bert.named_parameters():
+                if name in self.__temp_frozen:
+                    param.requires_grad = True
+            self.__one_training_epoch = True
+    def on_validation_epoch_start(self):
+        self.eval()
+    def on_test_epoch_start(self):
+        self.eval()
 
