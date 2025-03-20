@@ -27,7 +27,7 @@ if __name__ == "__main__":
     parser.add_argument("-cn", metavar="conceptnet-assertions-5.7.0.csv", type=str,
                         help="Path to conceptnet assertions")
     parser.add_argument("--pretrained", default=DEFAULT_MODEL, metavar=DEFAULT_MODEL, help="Pretrained model to intialize BERT")
-    parser.add_argument("-d", type=pathlib.Path, required=True, metavar="output/", help="Output directory containing the CN triples, and the HuggingFace saved model")
+    parser.add_argument("-d", type=pathlib.Path, required=True, metavar="output/", help="Output directory containing the CN triples, the HF checkpoint dirs, and the final HF saved model")
     args = parser.parse_args()
 
     os.makedirs(args.d, exist_ok=True)
@@ -132,14 +132,17 @@ if __name__ == "__main__":
             return new_inputs, new_labels
 
     trainer_args = TrainingArguments(
+        output_dir=args.d,
+        overwrite_output_dir=False,
+
         save_strategy="steps",
-        save_steps=.10,
+        save_steps=.01,
 
         eval_strategy='steps',
-        eval_steps=.10,
+        eval_steps=.01,
 
         learning_rate=5e-5,
-        num_train_epochs=5,
+        num_train_epochs=50,
 
         metric_for_best_model='loss',
         load_best_model_at_end=True
@@ -154,5 +157,5 @@ if __name__ == "__main__":
         callbacks=[EarlyStoppingCallback(3)],
         data_collator=CustomCollator(tokenizer)
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=True)
     trainer.save_model(args.d)
