@@ -80,12 +80,12 @@ class MyStanceModule(StanceModule):
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
 
-    def on_before_optimizer_step(self, optimizer):
-        if self.__one_training_epoch:
-            for name, param in self.classifier.bert.named_parameters():
-                print(name)
-                print(param.grad)
-        return super().on_before_optimizer_step(optimizer)
+    # def on_before_optimizer_step(self, optimizer):
+        # if self.__one_training_epoch:
+            # for name, param in self.classifier.bert.named_parameters():
+                # print(name)
+                # print(param.grad)
+        # return super().on_before_optimizer_step(optimizer)
 
     # FIXME: Figure out the more standard way to do this
     def on_train_epoch_start(self):
