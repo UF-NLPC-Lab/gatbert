@@ -20,28 +20,47 @@ def get_entity_embeddings(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'entities.pkl')
 def get_relation_embeddings(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'relations.pkl')
-def get_triples(graph_root: os.PathLike) -> os.PathLike:
+def get_triples_path(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'numeric_triples.tsv.gz')
+def get_bert_triples_path(graph_root: os.PathLike) -> os.PathLike:
+    return os.path.join(graph_root, 'bert_triples.tsv.gz')
+
+type AdjMat = Dict[int, List[Tuple[int, int]]]
+
+def read_adj_mat(triples_path: os.PathLike) -> AdjMat:
+    # TODO: don't use pandas for this
+    edge_df = pd.read_csv(triples_path, compression='gzip', delimiter='\t')
+    heads = edge_df['head'].apply(int) # head is also a DF method. Use [] to circumvent that
+    tails = edge_df['tail'].apply(int)  # Same for tail
+    rels = 2 * edge_df.relation.apply(int)
+    inv_rels = rels + 1
+    adj = defaultdict(list)
+    for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
+        adj[head].append((tail, rel))
+        adj[tail].append((head, inv_rel))
+    adj = dict(adj) # If you don't intend any more writes, you should convert your defaultdict to a dict
+    return adj
+
+def update_adj_mat(sink: AdjMat, source: AdjMat) -> AdjMat:
+    for (head, edges) in source.items():
+        if head not in sink:
+            sink[head] = []
+        sink[head].extend(edges)
+    return sink
 
 @dataclasses.dataclass
 class CNGraph:
 
     uri2id: Dict[str, int]
     id2uri: Dict[int, str]
-    tok2id: Dict[str, int]
     rel2id: Dict[str, int]
-    adj: Dict[int, List[Tuple[int, int]]]
+    adj: AdjMat
 
     def __init__(self, uri2id, id2uri, adj, rel2id):
         self.uri2id = uri2id
         self.id2uri = id2uri
         self.adj = adj
         self.rel2id = rel2id
-
-        matches = map(lambda pair: (CN_URI_PATT.fullmatch(pair[0]), pair[1]), self.uri2id.items())
-        matches = filter(lambda pair: pair[0], matches)
-        self.tok2id = {match.group(1):id for (match, id) in matches}
-
 
     def __repr__(self):
         return "<CNGraph>"
@@ -77,27 +96,12 @@ class CNGraph:
     @staticmethod
     def from_pykeen(pykeen_dir: str):
         pykeen_dir  = pathlib.Path(pykeen_dir)
-
         uri2id = CNGraph.read_entitites(pykeen_dir)
         id2uri = {v:k for (k, v) in uri2id.items()}
-
-        # TODO: don't use pandas for this
-        edge_df = pd.read_csv(pykeen_dir.joinpath('numeric_triples.tsv.gz'), compression='gzip', delimiter='\t')
-        heads = edge_df['head'].apply(int) # head is also a DF method. Use [] to circumvent that
-        tails = edge_df['tail'].apply(int)  # Same for tail
-        rels = 2 * edge_df.relation.apply(int)
-        inv_rels = rels + 1
-        adj = defaultdict(list)
-        for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
-            adj[head].append((tail, rel))
-            adj[tail].append((head, inv_rel))
-        adj = dict(adj) # If you don't intend any more writes, you should convert your defaultdict to a dict
-
         rel2id = CNGraph.read_relations(pykeen_dir)
-
         return CNGraph(
             uri2id=uri2id,
             id2uri=id2uri,
-            adj=adj,
+            adj=read_adj_mat(get_triples_path(pykeen_dir)),
             rel2id=rel2id
         )

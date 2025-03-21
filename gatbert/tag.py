@@ -3,6 +3,7 @@ Tag a set of stance files with CN graph nodes
 """
 # STL
 import json
+from typing import Dict
 import argparse
 import sys
 import csv
@@ -11,23 +12,28 @@ from collections import defaultdict
 from itertools import islice
 from tqdm import tqdm
 # Local
-from .constants import DEFAULT_MAX_DEGREE
+from .constants import DEFAULT_MAX_DEGREE, CN_URI_PATT
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize, parse_vast
 from .graph_sample import GraphSample
-from .graph import CNGraph
+from .graph import AdjMat, CNGraph, get_triples_path, get_bert_triples_path, read_adj_mat, update_adj_mat
 from .utils import time_block
 
-def make_seed_dict(graph: CNGraph, tokens: List[str]):
+def make_seed_dict(tok2id, tokens: List[str]):
     rval = []
     for token in tokens:
         seeds = []
-        kb_id = graph.tok2id.get(token.lower())
+        kb_id = tok2id.get(token.lower())
         if kb_id is not None:
             seeds.append(kb_id)
         rval.append((token, seeds))
     return rval
 
-def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
+def naive_sample(sample: PretokenizedSample,
+                  tok2id: Dict[str, int],
+                  id2uri: Dict[int, str],
+                  adj: AdjMat,
+                 max_hops: int = 1,
+                 max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
     """
     Just take the seed concepts that match tokens in the sample,
     and nodes that neighbor those seeds.
@@ -38,8 +44,8 @@ def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, 
 
     builder = GraphSample.Builder(stance=sample.stance)
 
-    target_seeds = make_seed_dict(graph, sample.target)
-    context_seeds = make_seed_dict(graph, sample.context)
+    target_seeds = make_seed_dict(tok2id, sample.target)
+    context_seeds = make_seed_dict(tok2id, sample.context)
     builder.add_seeds(
         target_seeds,
         context_seeds
@@ -52,7 +58,7 @@ def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, 
         last_frontier = frontier
         frontier = set()
         for head_kb_id in last_frontier:
-            outgoing = graph.adj.get(head_kb_id, [])
+            outgoing = adj.get(head_kb_id, [])
             if len(outgoing) <= max_degree:
                 for (tail_kb_id, relation_id) in outgoing:
                     builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
@@ -60,17 +66,20 @@ def naive_sample(sample: PretokenizedSample, graph: CNGraph, max_hops: int = 1, 
         frontier -= visited
 
     for head_kb_id in frontier:
-        for (tail_kb_id, relation_id) in graph.adj[head_kb_id]:
+        for (tail_kb_id, relation_id) in adj[head_kb_id]:
             if tail_kb_id in frontier:
                 builder.add_kb_edge(head_kb_id, tail_kb_id, relation_id)
 
     graph_sample = builder.build()
     # Replace all KB IDs with KB uris now
     for i in range(len(graph_sample.kb)):
-        graph_sample.kb[i] = graph.id2uri[graph_sample.kb[i]]
+        graph_sample.kb[i] = id2uri[graph_sample.kb[i]]
     return graph_sample
 
-def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
+def bridge_sample(sample: PretokenizedSample,
+                  tok2id: Dict[str, int],
+                  id2uri: Dict[int, str],
+                  adj: AdjMat) -> GraphSample:
     """
     Sample for CN nodes that act as "bridges" between target tokens and context tokens.
 
@@ -79,8 +88,8 @@ def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
     We only keep nodes that are part of a 0-, 1-, or 2-hop path between target seeds and context seeds.
     """
 
-    target_seed_dict = make_seed_dict(graph, sample.target)
-    context_seed_dict = make_seed_dict(graph, sample.context)
+    target_seed_dict = make_seed_dict(tok2id, sample.target)
+    context_seed_dict = make_seed_dict(tok2id, sample.context)
 
     flatten = lambda sd: set(node for (_, node_list) in sd for node in node_list)
     target_seeds = flatten(target_seed_dict)
@@ -95,14 +104,14 @@ def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
         frontier = []
         for seed in seeds:
             assert seed not in query_set
-            for (neighbor, _) in graph.adj.get(seed, []):
+            for (neighbor, _) in adj.get(seed, []):
                 hop_dict[neighbor].add(seed)
                 frontier.append(neighbor)
                 if neighbor in query_set:
                     kept.add(neighbor)
                     kept.add(seed)
         for node in frontier:
-            for (neighbor, _) in graph.adj.get(node, []):
+            for (neighbor, _) in adj.get(node, []):
                 if neighbor in query_set:
                     kept.add(neighbor)
                     kept.add(node)
@@ -128,19 +137,19 @@ def bridge_sample(sample: PretokenizedSample, graph: CNGraph) -> GraphSample:
         if head in visited:
             continue
         visited.add(head)
-        for (tail, relation) in filter(lambda pair: pair[0] in kept, graph.adj.get(head, [])):
+        for (tail, relation) in filter(lambda pair: pair[0] in kept, adj.get(head, [])):
             builder.add_kb_edge(head, tail, relation)
             frontier.append(tail)
 
     graph_sample = builder.build()
     # Replace all KB IDs with KB uris now
     for i in range(len(graph_sample.kb)):
-        graph_sample.kb[i] = graph.id2uri[graph_sample.kb[i]]
+        graph_sample.kb[i] = id2uri[graph_sample.kb[i]]
     return graph_sample
 
 def main(raw_args=None):
 
-    def get_tag_func(name) -> Callable[[PretokenizedSample, CNGraph], GraphSample]:
+    def get_tag_func(name):
         if name == "bridge":
             return bridge_sample
         elif name == "naive":
@@ -154,6 +163,7 @@ def main(raw_args=None):
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("--graph",    type=str, metavar="graph.json|pykeen_outdir/", help="File containing graph data written with .extract_cn")
 
+    parser.add_argument("--bert-sim", action="store_true", help="Add BERT similarity edges")
     parser.add_argument("--sample", type=get_tag_func, default=bridge_sample, metavar="bridge|naive", help="How to sample nodes from the CN graph")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
     args = parser.parse_args(raw_args)
@@ -168,13 +178,23 @@ def main(raw_args=None):
     else:
         raise RuntimeError("--semeval not yet supported")
 
-    graph = CNGraph.read(args.graph)
+    # Read graph data from disk
+    uri2id = CNGraph.read_entitites(args.graph)
+    matches = map(lambda pair: (CN_URI_PATT.fullmatch(pair[0]), pair[1]), uri2id.items())
+    matches = filter(lambda pair: pair[0], matches)
+    tok2id = {match.group(1):id for (match, id) in matches}
+    id2uri = {v:k for k,v in uri2id.items()}
+    adj = read_adj_mat(get_triples_path(args.graph))
+    if args.bert_sim:
+        bert_adj = read_adj_mat(get_bert_triples_path(args.graph))
+        update_adj_mat(adj, bert_adj)
+
     tag_func = args.sample
 
     samples = list(map(get_default_pretokenize(), sample_gen))
     processed = []
     for sample in tqdm(samples):
-        processed.append(tag_func(sample, graph).to_row())
+        processed.append(tag_func(sample, tok2id, id2uri, adj).to_row())
     with open(args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(processed)
 
