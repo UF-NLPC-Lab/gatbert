@@ -16,10 +16,14 @@ from .utils import open_gzip_or_plain
 EdgeList = List[Tuple[int, int, int]]
 NodeList = List[int]
 
-def get_entity_embeddings(graph_root: os.PathLike) -> os.PathLike:
+def get_entity_embeddings_path(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'entities.pkl')
-def get_relation_embeddings(graph_root: os.PathLike) -> os.PathLike:
+def get_relation_embeddings_path(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'relations.pkl')
+def get_entities_path(graph_root: os.PathLike) -> os.PathLike:
+    return os.path.join(graph_root, "entity_to_id.tsv.gz")
+def get_relations_path(graph_root: os.PathLike) -> os.PathLike:
+    return os.path.join(graph_root, "relation_to_id.tsv.gz")
 def get_triples_path(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'numeric_triples.tsv.gz')
 def get_bert_triples_path(graph_root: os.PathLike) -> os.PathLike:
@@ -48,60 +52,21 @@ def update_adj_mat(sink: AdjMat, source: AdjMat) -> AdjMat:
         sink[head].extend(edges)
     return sink
 
-@dataclasses.dataclass
-class CNGraph:
+def read_entitites(p: os.PathLike):
+    uri2id = {}
+    with open_gzip_or_plain(p) as r:
+        reader = csv.DictReader(r, delimiter='\t')
+        for row in reader:
+            uri2id[row['label']] = int(row['id'])
+    return uri2id
 
-    uri2id: Dict[str, int]
-    id2uri: Dict[int, str]
-    rel2id: Dict[str, int]
-    adj: AdjMat
-
-    def __init__(self, uri2id, id2uri, adj, rel2id):
-        self.uri2id = uri2id
-        self.id2uri = id2uri
-        self.adj = adj
-        self.rel2id = rel2id
-
-    def __repr__(self):
-        return "<CNGraph>"
-
-    @staticmethod
-    def read(path: str):
-        assert os.path.isdir(path)
-        return CNGraph.from_pykeen(path)
-
-    @staticmethod
-    def read_entitites(dir_or_path: os.PathLike):
-        dir_or_path = pathlib.Path(dir_or_path)
-        entity_path = dir_or_path.joinpath("entity_to_id.tsv") if os.path.isdir(dir_or_path) else dir_or_path
-        uri2id = {}
-        with open_gzip_or_plain(entity_path) as r:
-            reader = csv.DictReader(r, delimiter='\t')
-            for row in reader:
-                uri2id[row['label']] = int(row['id'])
-        return uri2id
-
-    @staticmethod
-    def read_relations(pykeen_dir: os.PathLike):
-        rel2id = {}
-        with open_gzip_or_plain(pathlib.Path(pykeen_dir).joinpath("relation_to_id.tsv")) as r:
-            reader = csv.DictReader(r, delimiter='\t')
-            for row in reader:
-                label = row['label']
-                forward_id = int(row['id'])
-                rel2id[label] = forward_id
-                rel2id[f'{label}/inv'] = forward_id + 1
-        return rel2id
-
-    @staticmethod
-    def from_pykeen(pykeen_dir: str):
-        pykeen_dir  = pathlib.Path(pykeen_dir)
-        uri2id = CNGraph.read_entitites(pykeen_dir)
-        id2uri = {v:k for (k, v) in uri2id.items()}
-        rel2id = CNGraph.read_relations(pykeen_dir)
-        return CNGraph(
-            uri2id=uri2id,
-            id2uri=id2uri,
-            adj=read_adj_mat(get_triples_path(pykeen_dir)),
-            rel2id=rel2id
-        )
+def read_relations(p: os.PathLike):
+    rel2id = {}
+    with open_gzip_or_plain(p) as r:
+        reader = csv.DictReader(r, delimiter='\t')
+        for row in reader:
+            label = row['label']
+            forward_id = int(row['id'])
+            rel2id[label] = forward_id
+            rel2id[f'{label}/inv'] = forward_id + 1
+    return rel2id

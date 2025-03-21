@@ -15,7 +15,7 @@ import numpy as np
 # Local
 from .constants import DEFAULT_MODEL
 from .pykeen_utils import save_all_triples
-from .graph import CNGraph
+from .graph import read_adj_mat, get_triples_path, get_entities_path, read_entitites
 from .encoder import pretokenize_cn_uri
 from .utils import time_block
 
@@ -40,8 +40,8 @@ if __name__ == "__main__":
 
     # A bit inefficient to re-read the entities we just wrote to disk,
     # but good enough for now
-    graph = CNGraph.from_pykeen(args.d)
-    id2uri = graph.id2uri
+    id2uri = {v:k for k,v in read_entitites(get_entities_path(args.d)).items()}
+    adj = read_adj_mat(get_triples_path(args.d))
 
     rng = np.random.default_rng(seed=0)
 
@@ -49,18 +49,18 @@ if __name__ == "__main__":
     desired_pos = len(node_ids)
     desired_neg = desired_pos
 
-    all_pos = {(head, tail) for (head, edges) in graph.adj.items() for (tail, _) in edges}
+    all_pos = {(head, tail) for (head, edges) in adj.items() for (tail, _) in edges}
     if len(all_pos) < desired_pos:
         print(f"Not enough edges to meet quota. Reducing number of positive samples to {len(all_pos)}")
         desired_pos = len(all_pos)
 
     with tqdm(total=desired_pos, desc="Positive NSP Sample Selection") as pos_progress_bar:
         chosen_pos = set()
-        non_islands = sorted(n for n in node_ids if n in graph.adj)
+        non_islands = sorted(n for n in node_ids if n in adj)
         # Round robin allocation of edges from each node
         while len(chosen_pos) < desired_pos:
             for node_id in non_islands:
-                edges = graph.adj[node_id]
+                edges = adj[node_id]
                 if edges:
                     # Take a random edge as a sample
                     index = rng.choice(len(edges))
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     with tqdm(total=desired_neg, desc="Negative NSP Sample Selection") as progress_bar:
         chosen_neg = set()
         # Node with no edges (recall we add inverse edges, so 0-outdegree also means 0-indegree)
-        islands = [node_id for node_id in node_ids if node_id not in graph.adj]
+        islands = [node_id for node_id in node_ids if node_id not in adj]
         i = 0
         while i < len(islands) and len(chosen_neg) < desired_neg:
             # This loop has never actually run because our dataset has no islands (but yours might)
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     os.environ['TOKENIZERS_PARALLELISM'] = "false"
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(args.pretrained)
     tokenizer.save_pretrained(args.d)
-    id2text = {id : pretokenize_cn_uri(graph.id2uri[id]) for id in node_ids}
+    id2text = {id : pretokenize_cn_uri(id2uri[id]) for id in node_ids}
     def encode(head_id, tail_id, nsp_label):
         encoding = tokenizer(text=id2text[head_id],
                              text_pair=id2text[tail_id],
@@ -157,5 +157,5 @@ if __name__ == "__main__":
         callbacks=[EarlyStoppingCallback(3)],
         data_collator=CustomCollator(tokenizer)
     )
-    trainer.train(resume_from_checkpoint=True)
+    trainer.train()
     trainer.save_model(args.d)

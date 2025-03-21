@@ -2,21 +2,18 @@
 Tag a set of stance files with CN graph nodes
 """
 # STL
-import json
 from typing import Dict
 import argparse
 import sys
 import csv
-from typing import List, Callable
+from typing import List
 from collections import defaultdict
-from itertools import islice
 from tqdm import tqdm
 # Local
 from .constants import DEFAULT_MAX_DEGREE, CN_URI_PATT
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize, parse_vast
 from .graph_sample import GraphSample
-from .graph import AdjMat, CNGraph, get_triples_path, get_bert_triples_path, read_adj_mat, update_adj_mat
-from .utils import time_block
+from .graph import AdjMat, get_triples_path, get_bert_triples_path, read_adj_mat, update_adj_mat, read_entitites, get_entities_path
 
 def make_seed_dict(tok2id, tokens: List[str]):
     rval = []
@@ -179,7 +176,7 @@ def main(raw_args=None):
         raise RuntimeError("--semeval not yet supported")
 
     # Read graph data from disk
-    uri2id = CNGraph.read_entitites(args.graph)
+    uri2id = read_entitites(get_entities_path(args.graph))
     matches = map(lambda pair: (CN_URI_PATT.fullmatch(pair[0]), pair[1]), uri2id.items())
     matches = filter(lambda pair: pair[0], matches)
     tok2id = {match.group(1):id for (match, id) in matches}

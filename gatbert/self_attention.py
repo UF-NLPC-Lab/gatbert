@@ -33,6 +33,7 @@ class EdgeEmbeddings(torch.nn.Module):
         super().__init__()
         self.embeddings = torch.nn.Embedding(config.n_relations + len(SpecialRelation), config.hidden_size)
         self.embeddings.weight.data[SpecialRelation.TOKEN_TO_TOKEN.value] = 0.
+        self.embeddings.weight.data[SpecialRelation.KB_SIM.value] = 0.
 
     def forward(self, edge_indices: torch.Tensor, batch_size: int, n_nodes: int):
         # All the indices save the relation IDs

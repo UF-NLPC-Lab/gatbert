@@ -6,12 +6,11 @@ import pathlib
 # 3rd Party
 from tqdm import tqdm
 from transformers import BertForPreTraining, BertTokenizerFast
-from transformers.data.data_collator import pad_without_fast_tokenizer_warning
 from torch.utils.data import DataLoader, IterableDataset
 import torch
 # Local
-from .graph import CNGraph, get_entity_embeddings
-from .encoder import collate_ids, pretokenize_cn_uri
+from .graph import get_entity_embeddings_path, read_entitites, get_entities_path
+from .encoder import pretokenize_cn_uri
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -37,14 +36,13 @@ if __name__ == "__main__":
     model.eval()
     model.to(device)
 
-    uri2id = CNGraph.read_entitites(args.d)
+    uri2id = read_entitites(get_entities_path(args.d))
     uri2id = sorted(uri2id.items(), key = lambda pair: pair[1])
     # Ordering check
     uris = []
     for (i, (uri, id)) in enumerate(uri2id):
         assert i == id
         uris.append(uri)
-
     tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(tok_dir)
 
     class UriDataset(IterableDataset):
@@ -71,5 +69,5 @@ if __name__ == "__main__":
         uri_embeddings.weight.data[start: start + current_batch_size, :] = \
             output.hidden_states[-1][:, 0].detach()
         start += current_batch_size
-    torch.save(uri_embeddings, get_entity_embeddings(args.d))
+    torch.save(uri_embeddings, get_entity_embeddings_path(args.d))
     

@@ -12,7 +12,7 @@ from pykeen.models import ConvE, DistMult, ProjE, PairRE, TransE, TransF, TransH
 from pykeen.utils import set_random_seed
 # Local
 from .pykeen_utils import save_all_triples
-from .graph import get_entity_embeddings, get_relation_embeddings
+from .graph import get_entity_embeddings_path, get_relation_embeddings_path
 
 SIMPLE_ENTITY_EMBEDDINGS = (ConvE, DistMult, PairRE, ProjE, TransE, TransF, TransH, TransR,)
 SIMPLE_REL_EMBEDDINGS = (TransE,)
@@ -59,11 +59,11 @@ def main(raw_args):
         )
         model = pipeline_res.model
         if isinstance(model, SIMPLE_ENTITY_EMBEDDINGS):
-            torch.save(model.entity_representations[0]._embeddings, get_entity_embeddings(out_path))
+            torch.save(model.entity_representations[0]._embeddings, get_entity_embeddings_path(out_path))
         else:
             raise ValueError(f"Unsupported type {type(model)}")
         if isinstance(model, SIMPLE_REL_EMBEDDINGS):
-            torch.save(model.relation_representations[0]._embeddings, get_relation_embeddings(out_path))
+            torch.save(model.relation_representations[0]._embeddings, get_relation_embeddings_path(out_path))
 
         pipeline_res.save_to_directory(
             out_path,

@@ -14,10 +14,13 @@ from .encoder import *
 from .graph import *
 from .cgcn import Cgcn
 
+def get_n_relations(graph_path: os.PathLike):
+    return len(read_relations(get_relations_path(graph_path)))
+
 def load_kb_embeddings(graph_path: os.PathLike, pretrained_relations=False) -> Tuple[torch.Tensor, torch.Tensor]:
-    entity_embeddings =  torch.load(get_entity_embeddings(graph_path), weights_only=False)
-    rel_path = get_relation_embeddings(graph_path)
-    expected_relations = len(CNGraph.read_relations(graph_path))
+    entity_embeddings =  torch.load(get_entity_embeddings_path(graph_path), weights_only=False)
+    rel_path = get_relation_embeddings_path(graph_path)
+    expected_relations = get_n_relations(graph_path)
     if pretrained_relations and os.path.exists(rel_path):
         rel_embeddings = torch.load(rel_path, weights_only=False) if os.path.exists(graph_path) else None
         assert len(rel_embeddings.weight.shape) == 2
@@ -76,10 +79,9 @@ class HybridClassifier(StanceClassifier):
                 ):
         super().__init__()
 
-        graph_obj = CNGraph.read(graph)
         self.config = GatbertConfig(
             BertConfig.from_pretrained(pretrained_model),
-            n_relations=len(graph_obj.rel2id),
+            n_relations=get_n_relations(graph),
         )
 
         pretrained_model_obj = BertModel.from_pretrained(pretrained_model)
@@ -92,7 +94,7 @@ class HybridClassifier(StanceClassifier):
             out_features=len(Stance),
             bias=False
         )
-        self.__preprocessor = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph_obj)
+        self.__preprocessor = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph)
 
     def get_encoder(self):
         return self.__preprocessor
@@ -111,10 +113,11 @@ class HybridClassifier(StanceClassifier):
     class Encoder(Encoder):
         def __init__(self,
                      tokenizer: PreTrainedTokenizerFast,
-                     graph: CNGraph):
+                     graph: os.PathLike):
             self.__tokenizer = tokenizer
-            self.__graph = graph
-            self.__total_relations = len(graph.rel2id) + len(SpecialRelation)
+
+            self.__uri2id = read_entitites(get_entities_path(graph))
+            self.__total_relations = get_n_relations(graph) + len(SpecialRelation)
 
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
@@ -128,7 +131,7 @@ class HybridClassifier(StanceClassifier):
                                        truncation='longest_first')
             device = tokenized_text['input_ids'].device
 
-            kb_input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
+            kb_input_ids = torch.tensor([[self.__uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
             num_kb_nodes = kb_input_ids.shape[-1]
 
             # Combine input ids
@@ -300,7 +303,7 @@ class ConcatClassifier(StanceClassifier):
         """
         def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: os.PathLike):
             self.__tokenizer = tokenizer
-            self.__uri2id = CNGraph.read_entitites(graph)
+            self.__uri2id = read_entitites(get_entities_path(graph))
 
         @staticmethod
         def get_target_seeds_mask(sample: GraphSample) -> torch.Tensor:

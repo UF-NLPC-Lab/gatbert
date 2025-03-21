@@ -15,13 +15,13 @@ from tqdm import tqdm
 # Local
 from .constants import SpecialRelation
 from .utils import batched
-from .graph import get_entity_embeddings, get_bert_triples_path
+from .graph import get_entity_embeddings_path, get_bert_triples_path
 
 def main(graph_root, threshold: float = 0.95):
     graph_root = pathlib.Path(graph_root)
     assert os.path.exists(graph_root)
     out_path = get_bert_triples_path(graph_root)
-    embedding_mat = torch.load(get_entity_embeddings(graph_root), weights_only=False).weight
+    embedding_mat = torch.load(get_entity_embeddings_path(graph_root), weights_only=False).weight
     with torch.no_grad():
         for i in tqdm(range(embedding_mat.shape[0]), total=embedding_mat.shape[0]):
             embedding_mat[i] /= torch.linalg.vector_norm(embedding_mat[i])
