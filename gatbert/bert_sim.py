@@ -1,10 +1,6 @@
-"""
-Usage: python -m gatbert.bert_sim graph_dir/
-
-graph_dir/ should contain an `entity_to_id.tsv.gz`.
-A `numeric_bert_triples.tsv` is written as output.
-"""
 # STL
+from typing import Optional
+import argparse
 import os
 import pathlib
 import sys
@@ -17,10 +13,14 @@ from .constants import SpecialRelation
 from .utils import batched
 from .graph import get_entity_embeddings_path, get_bert_triples_path
 
-def main(graph_root, threshold: float = 0.95):
+def make_edges(graph_root: os.PathLike,
+         out_path: Optional[os.PathLike] = None,
+         threshold: float = 0.95):
     graph_root = pathlib.Path(graph_root)
+    if out_path is None:
+        out_path = get_bert_triples_path(graph_root)
+
     assert os.path.exists(graph_root)
-    out_path = get_bert_triples_path(graph_root)
     embedding_mat = torch.load(get_entity_embeddings_path(graph_root), weights_only=False).weight
     with torch.no_grad():
         for i in tqdm(range(embedding_mat.shape[0]), total=embedding_mat.shape[0]):
@@ -43,8 +43,12 @@ def main(graph_root, threshold: float = 0.95):
                 ]) + '\n'
             ).encode())
 
+def main(raw_args=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--graph", type=pathlib.Path, metavar="graph_dir/", required=True)
+    parser.add_argument("-o", type=pathlib.Path, metavar="bert_triples.tsv.gz")
+    args = parser.parse_args(raw_args)
+    make_edges(args.graph, args.o)
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(__doc__)
-        sys.exit(1)
-    main(sys.argv[1])
+    main(sys.argv[1:])
