@@ -62,4 +62,16 @@ CN_URI_PATT = re.compile(r'/c/en/([^/]+)')
 @enum.unique
 class SpecialRelation(enum.Enum):
     TOKEN_TO_TOKEN = -1
+    """
+    Token-to-token relations (that is, what a regular transformer encodes already)
+    """
+
     TOKEN_TO_KB = -2
+    """
+    Arbitrary relation between a token and a KB node (the 'bridge' between tokens and the KG)
+    """
+
+    KB_SIM = -3
+    """
+    BERT embeddings of these two KB nodes are similar
+    """
