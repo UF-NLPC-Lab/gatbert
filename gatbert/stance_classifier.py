@@ -252,7 +252,7 @@ class ConcatClassifier(StanceClassifier):
         self.model_type = graph_model
 
         self.pred_head = torch.nn.Linear(2 * self.bert.config.hidden_size + 2 * self.entity_embed_dim, len(Stance), bias=False)
-        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), CNGraph.read(graph))
+        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph)
     
     def get_encoder(self):
         return self.__encoder
@@ -298,9 +298,9 @@ class ConcatClassifier(StanceClassifier):
         Creates samples consisting of a graph with only external information (ConceptNet, AMR, etc.)
         and a separate sequence of tokens. The graph and tokens are totally independent.
         """
-        def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: CNGraph):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: os.PathLike):
             self.__tokenizer = tokenizer
-            self.__graph = graph
+            self.__uri2id = CNGraph.read_entitites(graph)
 
         @staticmethod
         def get_target_seeds_mask(sample: GraphSample) -> torch.Tensor:
@@ -340,7 +340,7 @@ class ConcatClassifier(StanceClassifier):
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
 
-            input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
+            input_ids = torch.tensor([[self.__uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
             num_kb_nodes = input_ids.shape[-1]
             orig_text_nodes = len(sample.target) + len(sample.context)
             # Only keep edges between two graph concepts
