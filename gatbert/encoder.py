@@ -69,4 +69,6 @@ def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:
     return torch.concatenate(batched, dim=-1)
 
 def pretokenize_cn_uri(uri: str) -> List[str]:
-    return uri.split('/')[3].split('_')
+    if uri.startswith('/'):
+        return uri.split('/')[3].split('_')
+    return uri.split()

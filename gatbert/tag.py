@@ -27,7 +27,7 @@ def make_seed_dict(tok2id, tokens: List[str]):
 
 def naive_sample(sample: PretokenizedSample,
                   tok2id: Dict[str, int],
-                  id2uri: Dict[int, str],
+                  id2ent: Dict[int, str],
                   adj: AdjMat,
                  max_hops: int = 1,
                  max_degree: int = DEFAULT_MAX_DEGREE) -> GraphSample:
@@ -70,12 +70,12 @@ def naive_sample(sample: PretokenizedSample,
     graph_sample = builder.build()
     # Replace all KB IDs with KB uris now
     for i in range(len(graph_sample.kb)):
-        graph_sample.kb[i] = id2uri[graph_sample.kb[i]]
+        graph_sample.kb[i] = id2ent[graph_sample.kb[i]]
     return graph_sample
 
 def bridge_sample(sample: PretokenizedSample,
                   tok2id: Dict[str, int],
-                  id2uri: Dict[int, str],
+                  id2ent: Dict[int, str],
                   adj: AdjMat) -> GraphSample:
     """
     Sample for CN nodes that act as "bridges" between target tokens and context tokens.
@@ -141,7 +141,7 @@ def bridge_sample(sample: PretokenizedSample,
     graph_sample = builder.build()
     # Replace all KB IDs with KB uris now
     for i in range(len(graph_sample.kb)):
-        graph_sample.kb[i] = id2uri[graph_sample.kb[i]]
+        graph_sample.kb[i] = id2ent[graph_sample.kb[i]]
     return graph_sample
 
 def main(raw_args=None):
@@ -175,12 +175,19 @@ def main(raw_args=None):
     else:
         raise RuntimeError("--semeval not yet supported")
 
+    def entity_to_tok(entity_id: str):
+        if not entity_id.startswith('/'):
+            toks = entity_id.split()
+            return toks[0] if len(toks) == 1 else None
+        match_obj = CN_URI_PATT.fullmatch(entity_id)
+        return match_obj.group(1) if match_obj else None
+
     # Read graph data from disk
-    uri2id = read_entitites(get_entities_path(args.graph))
-    matches = map(lambda pair: (CN_URI_PATT.fullmatch(pair[0]), pair[1]), uri2id.items())
-    matches = filter(lambda pair: pair[0], matches)
-    tok2id = {match.group(1):id for (match, id) in matches}
-    id2uri = {v:k for k,v in uri2id.items()}
+    ent2id = read_entitites(get_entities_path(args.graph))
+    matches = map(lambda pair: (entity_to_tok(pair[0]), pair[1]), ent2id.items())
+    tok2id= {tok:id for tok,id in matches if tok}
+
+    id2ent = {v:k for k,v in ent2id.items()}
     adj = read_adj_mat(get_triples_path(args.graph))
     if args.bert_sim:
         bert_adj = read_adj_mat(get_bert_triples_path(args.graph))
@@ -191,7 +198,7 @@ def main(raw_args=None):
     samples = list(map(get_default_pretokenize(), sample_gen))
     processed = []
     for sample in tqdm(samples):
-        processed.append(tag_func(sample, tok2id, id2uri, adj).to_row())
+        processed.append(tag_func(sample, tok2id, id2ent, adj).to_row())
     with open(args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(processed)
 
