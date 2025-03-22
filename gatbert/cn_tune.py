@@ -28,6 +28,7 @@ if __name__ == "__main__":
                         help="Path to conceptnet assertions")
     parser.add_argument("--pretrained", default=DEFAULT_MODEL, metavar=DEFAULT_MODEL, help="Pretrained model to intialize BERT")
     parser.add_argument("-d", type=pathlib.Path, required=True, metavar="output/", help="Output directory containing the CN triples, the HF checkpoint dirs, and the final HF saved model")
+    parser.add_argument("--pos", type=str, metavar="N|all", help="How many positive triples to use for NSP. 'all' uses all available. Defaults to min(# of node IDs, # edges)")
     args = parser.parse_args()
 
     os.makedirs(args.d, exist_ok=True)
@@ -46,32 +47,40 @@ if __name__ == "__main__":
     rng = np.random.default_rng(seed=0)
 
     node_ids = sorted(id2uri)
-    desired_pos = len(node_ids)
-    desired_neg = desired_pos
 
     all_pos = {(head, tail) for (head, edges) in adj.items() for (tail, _) in edges}
-    if len(all_pos) < desired_pos:
-        print(f"Not enough edges to meet quota. Reducing number of positive samples to {len(all_pos)}")
+    if args.pos is None:
+        desired_pos = min(len(node_ids), len(all_pos))
+    elif args.pos == 'all':
         desired_pos = len(all_pos)
+    else:
+        desired_pos = int(args.pos)
+        if len(all_pos) < desired_pos:
+            print(f"Not enough edges to meet quota. Reducing number of positive samples to {len(all_pos)}")
+            desired_pos = len(all_pos)
+    desired_neg = desired_pos
 
-    with tqdm(total=desired_pos, desc="Positive NSP Sample Selection") as pos_progress_bar:
-        chosen_pos = set()
-        non_islands = sorted(n for n in node_ids if n in adj)
-        # Round robin allocation of edges from each node
-        while len(chosen_pos) < desired_pos:
-            for node_id in non_islands:
-                edges = adj[node_id]
-                if edges:
-                    # Take a random edge as a sample
-                    index = rng.choice(len(edges))
-                    # And remove it from the graph so we don't use it later
-                    edge = edges.pop(index)
-                    (tail, _) = edge
-
-                    chosen_pos.add( (node_id, tail) )
-                    pos_progress_bar.update()
-                    if len(chosen_pos) >= desired_pos:
-                        break
+    if desired_pos == len(all_pos):
+        chosen_pos = all_pos
+    else:
+        with tqdm(total=desired_pos, desc="Positive NSP Sample Selection") as pos_progress_bar:
+            chosen_pos = set()
+            non_islands = sorted(n for n in node_ids if n in adj)
+            # Round robin allocation of edges from each node
+            while len(chosen_pos) < desired_pos:
+                for node_id in non_islands:
+                    edges = adj[node_id]
+                    if edges:
+                        # Take a random edge as a sample
+                        index = rng.choice(len(edges))
+                        # And remove it from the graph so we don't use it later
+                        edge = edges.pop(index)
+                        (tail, _) = edge
+                        if (node_id, tail) not in chosen_pos:
+                            chosen_pos.add( (node_id, tail) )
+                            pos_progress_bar.update()
+                            if len(chosen_pos) >= desired_pos:
+                                break
 
     with tqdm(total=desired_neg, desc="Negative NSP Sample Selection") as progress_bar:
         chosen_neg = set()
