@@ -304,6 +304,7 @@ class ConcatClassifier(StanceClassifier):
         def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: os.PathLike):
             self.__tokenizer = tokenizer
             self.__uri2id = read_entitites(get_entities_path(graph))
+            self.__total_relations = get_n_relations(graph) + len(SpecialRelation)
 
         @staticmethod
         def get_target_seeds_mask(sample: GraphSample) -> torch.Tensor:
@@ -351,6 +352,8 @@ class ConcatClassifier(StanceClassifier):
             iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge)
             # Filter out edges pointing to truncated nodes
             iter_edge = filter(lambda e: e[1] < num_kb_nodes and e[2] < num_kb_nodes, iter_edge)
+            # Handle negative relation indices
+            iter_edge = map(lambda e: (*e[:-1], e[-1] % self.__total_relations), iter_edge)
             edge_indices = sorted(iter_edge)
             if edge_indices:
                 edge_indices = torch.tensor(edge_indices).transpose(1, 0)
