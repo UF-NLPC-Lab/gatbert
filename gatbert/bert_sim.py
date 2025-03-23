@@ -45,10 +45,10 @@ def make_edges(graph_root: os.PathLike,
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--graph", type=pathlib.Path, metavar="graph_dir/", required=True)
+    parser.add_argument("-d", type=pathlib.Path, metavar="graph_dir/", required=True)
     parser.add_argument("-o", type=pathlib.Path, metavar="bert_triples.tsv.gz")
     args = parser.parse_args(raw_args)
-    make_edges(args.graph, args.o)
+    make_edges(args.d, args.o)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
