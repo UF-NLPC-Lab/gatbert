@@ -190,7 +190,7 @@ def main(raw_args=None):
     id2ent = {v:k for k,v in ent2id.items()}
     adj = read_adj_mat(get_triples_path(args.graph))
     if args.bert_sim:
-        bert_adj = read_adj_mat(get_bert_triples_path(args.graph))
+        bert_adj = read_adj_mat(get_bert_triples_path(args.graph), make_inverse_rels=False)
         update_adj_mat(adj, bert_adj)
 
     tag_func = args.sample

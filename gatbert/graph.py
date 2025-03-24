@@ -31,17 +31,24 @@ def get_bert_triples_path(graph_root: os.PathLike) -> os.PathLike:
 
 type AdjMat = Dict[int, List[Tuple[int, int]]]
 
-def read_adj_mat(triples_path: os.PathLike) -> AdjMat:
+def read_adj_mat(triples_path: os.PathLike, make_inverse_rels=True) -> AdjMat:
     # TODO: don't use pandas for this
     edge_df = pd.read_csv(triples_path, compression='gzip', delimiter='\t')
     heads = edge_df['head'].apply(int) # head is also a DF method. Use [] to circumvent that
     tails = edge_df['tail'].apply(int)  # Same for tail
-    rels = 2 * edge_df.relation.apply(int)
-    inv_rels = rels + 1
+
     adj = defaultdict(list)
-    for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
-        adj[head].append((tail, rel))
-        adj[tail].append((head, inv_rel))
+    if make_inverse_rels:
+        rels = 2 * edge_df.relation.apply(int)
+        inv_rels = rels + 1
+        for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
+            adj[head].append((tail, rel))
+            adj[tail].append((head, inv_rel))
+    else:
+        rels = edge_df.relation.apply(int)
+        for (head, tail, rel) in zip(heads, tails, rels):
+            adj[head].append((tail, rel))
+
     adj = dict(adj) # If you don't intend any more writes, you should convert your defaultdict to a dict
     return adj
 
