@@ -20,14 +20,15 @@ def get_n_relations(graph_path: os.PathLike):
 def load_kb_embeddings(graph_path: os.PathLike, pretrained_relations=False) -> Tuple[torch.Tensor, torch.Tensor]:
     entity_embeddings =  torch.load(get_entity_embeddings_path(graph_path), weights_only=False)
     rel_path = get_relation_embeddings_path(graph_path)
+
     expected_relations = get_n_relations(graph_path)
+    total_relations = expected_relations + len(SpecialRelation)
+    rel_embeddings = torch.nn.Embedding(total_relations, entity_embeddings.weight.shape[1])
     if pretrained_relations and os.path.exists(rel_path):
-        rel_embeddings = torch.load(rel_path, weights_only=False) if os.path.exists(graph_path) else None
-        assert len(rel_embeddings.weight.shape) == 2
-        assert rel_embeddings.weight.shape[0] == expected_relations
-        assert rel_embeddings.weight.shape[1] == entity_embeddings.weight.shape[1]
-    else:
-        rel_embeddings = torch.nn.Embedding(expected_relations,entity_embeddings.weight.shape[1])
+        embedding_obj = torch.load(rel_path, weights_only=False)
+        pretrained_embeds = embedding_obj.weight.data
+        assert pretrained_embeds.shape == (expected_relations, entity_embeddings.weight.shape[1])
+        rel_embeddings.weight.data[:expected_relations] = pretrained_embeds
     return entity_embeddings, rel_embeddings
 
 class StanceClassifier(torch.nn.Module):
