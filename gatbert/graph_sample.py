@@ -9,7 +9,7 @@ import logging
 import torch
 from transformers import PreTrainedTokenizerFast
 # Local
-from .constants import Stance, TOKEN_TO_KB_RELATION_ID, TOKEN_TO_TOKEN_RELATION_ID, MAX_KB_NODES
+from .constants import Stance, SpecialRelation
 from .sample import Sample, PretokenizedSample
 from .types import TensorDict
 
@@ -97,12 +97,12 @@ class GraphSample:
                     self.edges.add(Edge(
                         head_node_index=text_ind,
                         tail_node_index=node_ind,
-                        relation_id=TOKEN_TO_KB_RELATION_ID
+                        relation_id=SpecialRelation.TOKEN_TO_KB.value
                     ))
                     self.edges.add(Edge(
                         head_node_index=node_ind,
                         tail_node_index=text_ind,
-                        relation_id=TOKEN_TO_KB_RELATION_ID
+                        relation_id=SpecialRelation.TOKEN_TO_KB.value
                     ))
             self.__seeded = True
 

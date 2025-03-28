@@ -18,7 +18,7 @@ from .self_attention import GatbertSelfAttention, \
     TranslatedKeySelfAttention, \
     RelationInnerProdSelfAttention, \
     HeterogeneousSelfAttention
-from .graph import get_entity_embeddings
+from .graph import get_entity_embeddings_path
 from .rel_mat_embeddings import RelationMatrixEmbeddings
 from .config import GatbertConfig
 from .utils import prod
@@ -123,7 +123,7 @@ class GatbertEmbeddings(torch.nn.Module):
         self.layer_norm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
-        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph), weights_only=False)
+        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings_path(graph), weights_only=False)
         self.entity_proj = torch.nn.Linear(self.entity_embeddings.weight.shape[-1], config.hidden_size, bias=True)
 
     def load_pretrained_weights(self, other: BertEmbeddings):

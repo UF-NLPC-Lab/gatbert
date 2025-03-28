@@ -18,3 +18,7 @@ lightning_logs/
 
 # Graphviz files
 *gv*
+
+# Training artifacts
+trainer_output/
+lightning_logs/

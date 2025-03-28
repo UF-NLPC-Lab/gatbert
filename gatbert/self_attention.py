@@ -5,7 +5,7 @@ import torch
 from transformers.models.bert.modeling_bert import BertSelfAttention
 # Local
 from .config import GatbertConfig
-from .constants import TOKEN_TO_TOKEN_RELATION_ID, NodeType
+from .constants import SpecialRelation, NodeType
 from .rel_mat_embeddings import RelationMatrixEmbeddings
 
 def sparse_softmax_and_dropout(logits: torch.Tensor, dropout: torch.nn.Dropout):
@@ -31,8 +31,9 @@ def sparse_softmax_and_dropout(logits: torch.Tensor, dropout: torch.nn.Dropout):
 class EdgeEmbeddings(torch.nn.Module):
     def __init__(self, config: GatbertConfig):
         super().__init__()
-        self.embeddings = torch.nn.Embedding(config.n_relations, config.hidden_size)
-        self.embeddings.weight.data[TOKEN_TO_TOKEN_RELATION_ID] = 0.
+        self.embeddings = torch.nn.Embedding(config.n_relations + len(SpecialRelation), config.hidden_size)
+        self.embeddings.weight.data[SpecialRelation.TOKEN_TO_TOKEN.value] = 0.
+        self.embeddings.weight.data[SpecialRelation.KB_SIM.value] = 0.
 
     def forward(self, edge_indices: torch.Tensor, batch_size: int, n_nodes: int):
         # All the indices save the relation IDs

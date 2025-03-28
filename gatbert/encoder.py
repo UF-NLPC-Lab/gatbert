@@ -1,16 +1,12 @@
 # STL
 from typing import List, Tuple, Dict, Iterable
 import abc
-from collections import defaultdict, OrderedDict
 import logging
-from itertools import product
 # 3rd party
 import torch
 from transformers import PreTrainedTokenizerFast, BertTokenizerFast
 # Local
 from .types import TensorDict
-from .constants import MAX_KB_NODES, TOKEN_TO_TOKEN_RELATION_ID, TOKEN_TO_KB_RELATION_ID
-from .data import get_default_pretokenize
 from .sample import Sample, PretokenizedSample
 from .graph_sample import GraphSample
 
@@ -71,3 +67,8 @@ def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:
         s[0, :] = i
         batched.append(s)
     return torch.concatenate(batched, dim=-1)
+
+def pretokenize_cn_uri(uri: str) -> List[str]:
+    if uri.startswith('/'):
+        return uri.split('/')[3].split('_')
+    return uri.split()

@@ -10,6 +10,7 @@ class F1Calc:
     def __init__(self):
         self.__favor_stats = torch.zeros(5, dtype=torch.int)
         self.__against_stats = torch.zeros(5, dtype=torch.int)
+        self.__neutral_stats = torch.zeros(5, dtype=torch.int)
         self.__summarized = False
 
         self.favor_precision: Optional[float] = None
@@ -18,6 +19,9 @@ class F1Calc:
         self.against_precision: Optional[float] = None
         self.against_recall: Optional[float] = None
         self.against_f1: Optional[float] = None
+        self.neutral_precision: Optional[float] = None
+        self.neutral_recall: Optional[float] = None
+        self.neutral_f1: Optional[float] = None
         self.macro_f1: Optional[float] = None
 
     @staticmethod
@@ -39,10 +43,12 @@ class F1Calc:
         stats = self.__stat_func(preds, labels).to(self.__favor_stats.device)
         self.__favor_stats += stats[Stance.FAVOR.value]
         self.__against_stats += stats[Stance.AGAINST.value]
+        self.__neutral_stats += stats[Stance.NONE.value]
 
     def reset(self):
         self.__favor_stats = torch.zeros(5, dtype=torch.int)
         self.__against_stats = torch.zeros(5, dtype=torch.int)
+        self.__neutral_stats = torch.zeros(5, dtype=torch.int)
         self.__summarized = False
 
     def summarize(self):
@@ -50,7 +56,9 @@ class F1Calc:
             F1Calc.compute_metrics(self.__favor_stats[0], self.__favor_stats[1], self.__favor_stats[3])
         self.against_precision, self.against_recall, self.against_f1 = \
             F1Calc.compute_metrics(self.__against_stats[0], self.__against_stats[1], self.__against_stats[3])
-        self.macro_f1 = (self.favor_f1 + self.against_f1) / 2
+        self.neutral_precision, self.neutral_recall, self.neutral_f1 = \
+            F1Calc.compute_metrics(self.__neutral_stats[0], self.__against_stats[1], self.__against_stats[3])
+        self.macro_f1 = (self.favor_f1 + self.against_f1 + self.neutral_f1) / 3
         self.__summarized = True
 
     def __stat_func(self, preds, targets):

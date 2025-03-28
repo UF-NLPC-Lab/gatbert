@@ -40,12 +40,9 @@ class StanceModule(L.LightningModule):
         self.__log_stats(self.__calc, f"{stage}")
     def __log_stats(self, calc: F1Calc, prefix):
         calc.summarize()
-        self.log(f"{prefix}_favor_precision", calc.favor_precision)
-        self.log(f"{prefix}_favor_recall", calc.favor_recall)
         self.log(f"{prefix}_favor_f1", calc.favor_f1)
-        self.log(f"{prefix}_against_precision", calc.against_precision)
-        self.log(f"{prefix}_against_recall", calc.against_recall)
         self.log(f"{prefix}_against_f1", calc.against_f1)
+        self.log(f"{prefix}_neutral_f1", calc.neutral_f1)
         self.log(f"{prefix}_macro_f1", calc.macro_f1)
         calc.reset()
 
@@ -71,8 +68,6 @@ class MyStanceModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.classifier = classifier
-        # FIXME: Do this in a cleaner way
-        self.train()
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
 

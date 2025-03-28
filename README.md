@@ -50,7 +50,7 @@ conda activate gatbert
 python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_train_all_onecol.csv --graph /conceptnet/data -o train_graph.tsv
 python -m gatbert.tag --ezstance /path/to/ezstance/subtaskA/noun_phrase/raw_val_all_onecol.csv   --graph /conceptnet/data -o val_graph.tsv
 ```
-I'd budget an hour for this process.
+I'd budget four hours for this process (some datasets are larger than others.)
 
 
 ## Running Experiments
@@ -101,3 +101,8 @@ You will need to update the following fields to run it on your machine:
 - `base.yaml`: `trainer.logger.init_args.save_dir`
 - `raw_data.yaml`: the data paths under `init_args.partitions`
 - `graph_data.yaml`: the data paths under `init_args.partitions`
+
+## Loading a Pre-Trained BERT Classifier
+
+Right now our pipeline only supports exporting BERT models and none of the graph models.
+See [our example](examples/bert_classifier.ipynb) for how to load one.

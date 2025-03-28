@@ -13,6 +13,11 @@ dependencies:
   - transformers
   - lightning
   - python-graphviz
+  - accelerate>=0.26.0
+
+  - plotly
+  - nbformat>=4.2.0
+
   - pip:
     - pykeen[transformers]
     - jsonargparse[signatures]

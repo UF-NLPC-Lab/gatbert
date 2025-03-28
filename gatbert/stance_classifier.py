@@ -1,19 +1,35 @@
 import abc
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Tuple
+from itertools import product
 import os
-import copy
 # 3rd Party
 import torch
-from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, AutoConfig
+from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, BertForSequenceClassification
 from transformers.models.bert.modeling_bert import BertConfig
 # Local
-from .types import Transform
 from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
-from .constants import Stance, NodeType, DEFAULT_MODEL
+from .constants import Stance, NodeType, DEFAULT_MODEL, MAX_KB_NODES, SpecialRelation
 from .config import GatbertConfig
 from .encoder import *
 from .graph import *
 from .cgcn import Cgcn
+
+def get_n_relations(graph_path: os.PathLike):
+    return len(read_relations(get_relations_path(graph_path)))
+
+def load_kb_embeddings(graph_path: os.PathLike, pretrained_relations=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    entity_embeddings =  torch.load(get_entity_embeddings_path(graph_path), weights_only=False)
+    rel_path = get_relation_embeddings_path(graph_path)
+
+    expected_relations = get_n_relations(graph_path)
+    total_relations = expected_relations + len(SpecialRelation)
+    rel_embeddings = torch.nn.Embedding(total_relations, entity_embeddings.weight.shape[1])
+    if pretrained_relations and os.path.exists(rel_path):
+        embedding_obj = torch.load(rel_path, weights_only=False)
+        pretrained_embeds = embedding_obj.weight.data
+        assert pretrained_embeds.shape == (expected_relations, entity_embeddings.weight.shape[1])
+        rel_embeddings.weight.data[:expected_relations] = pretrained_embeds
+    return entity_embeddings, rel_embeddings
 
 class StanceClassifier(torch.nn.Module):
 
@@ -25,22 +41,28 @@ class BertClassifier(StanceClassifier):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL):
         super().__init__()
-        self.bert = BertModel.from_pretrained(pretrained_model)
-        self.projection = torch.nn.Linear(
-            self.bert.config.hidden_size,
-            out_features=len(Stance),
-            bias=False
-        )
-        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model))
+
+        label2id = {s.name:s.value for s in Stance}
+        id2label = {v:k for k,v in label2id.items()}
+        self.config = BertConfig.from_pretrained(pretrained_model, id2label=id2label, label2id=label2id)
+        self.bert = BertForSequenceClassification.from_pretrained(pretrained_model, config=self.config)
+        self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
+
+        # None of our other models use a bias value for the prediction head
+        # The bert config doesn't let us enable or disable the bias, so we just set it to 0
+        # and never let it get updated during training
+        pred_bias = self.bert.classifier.bias
+        pred_bias.data[:] = 0.
+        pred_bias.requires_grad = False
+
+        self.__encoder = self.Encoder(self.tokenizer)
 
     def get_encoder(self):
         return self.__encoder
 
     def forward(self, *args, **kwargs):
         bert_output = self.bert(*args, **kwargs)
-        last_hidden_state = bert_output['last_hidden_state'][:, 0]
-        logits = self.projection(last_hidden_state)
-        return logits
+        return bert_output.logits
 
     class Encoder(Encoder):
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
@@ -64,10 +86,9 @@ class HybridClassifier(StanceClassifier):
                 ):
         super().__init__()
 
-        graph_obj = CNGraph.read(graph)
         self.config = GatbertConfig(
             BertConfig.from_pretrained(pretrained_model),
-            n_relations=len(graph_obj.rel2id),
+            n_relations=get_n_relations(graph),
         )
 
         pretrained_model_obj = BertModel.from_pretrained(pretrained_model)
@@ -80,7 +101,7 @@ class HybridClassifier(StanceClassifier):
             out_features=len(Stance),
             bias=False
         )
-        self.__preprocessor = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph_obj)
+        self.__preprocessor = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph)
 
     def get_encoder(self):
         return self.__preprocessor
@@ -99,9 +120,11 @@ class HybridClassifier(StanceClassifier):
     class Encoder(Encoder):
         def __init__(self,
                      tokenizer: PreTrainedTokenizerFast,
-                     graph: CNGraph):
+                     graph: os.PathLike):
             self.__tokenizer = tokenizer
-            self.__graph = graph
+
+            self.__uri2id = read_entitites(get_entities_path(graph))
+            self.__total_relations = get_n_relations(graph) + len(SpecialRelation)
 
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
@@ -115,7 +138,7 @@ class HybridClassifier(StanceClassifier):
                                        truncation='longest_first')
             device = tokenized_text['input_ids'].device
 
-            kb_input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
+            kb_input_ids = torch.tensor([[self.__uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
             num_kb_nodes = kb_input_ids.shape[-1]
 
             # Combine input ids
@@ -152,7 +175,7 @@ class HybridClassifier(StanceClassifier):
             # Need a 0 at the beginning for batch
             new_edges = []
             # The original token-to-token edges of a standard BERT model
-            new_edges.extend((0, head, tail, TOKEN_TO_TOKEN_RELATION_ID) for (head, tail) in product(range(new_text_nodes), range(new_text_nodes)))
+            new_edges.extend((0, head, tail, SpecialRelation.TOKEN_TO_TOKEN.value) for (head, tail) in product(range(new_text_nodes), range(new_text_nodes)))
             # The KB edges, with indices adjusted
             max_node_index = orig_text_nodes + num_kb_nodes
             for e in sample.edges:
@@ -170,6 +193,9 @@ class HybridClassifier(StanceClassifier):
                     continue
                 new_edges.extend((0, head, tail, e.relation_id) for (head, tail) in product(head_list, tail_list))
 
+            # Ensure no negative rel indices
+            new_edges = [(*others, rel % self.__total_relations) for (*others, rel) in new_edges]
+            # When we use these in sparse_coo arrays later, they'll need to be sorted
             new_edges.sort()
             new_edges = torch.tensor(new_edges, device=device).transpose(1, 0)
 
@@ -204,7 +230,8 @@ class ConcatClassifier(StanceClassifier):
                  graph: os.PathLike,
                  pretrained_model: str = DEFAULT_MODEL,
                  graph_model: Literal['cgcn', 'gat'] = 'gat',
-                 num_graph_layers: int = 2):
+                 num_graph_layers: int = 2,
+                 pretrained_relations: bool = False):
         """
         Args:
             pretrained_model_name: model to load for text portion of the model
@@ -214,12 +241,9 @@ class ConcatClassifier(StanceClassifier):
 
         self.bert = BertModel.from_pretrained(pretrained_model)
 
-        self.entity_embeddings: torch.nn.Embedding = torch.load(get_entity_embeddings(graph), weights_only=False)
-        self.relation_embeddings: torch.nn.Embedding = torch.load(get_relation_embeddings(graph), weights_only=False)
+        self.entity_embeddings, self.relation_embeddings = load_kb_embeddings(graph, pretrained_relations)
         (_, self.entity_embed_dim) = self.entity_embeddings.weight.shape
-        assert len(self.relation_embeddings.weight.shape) == 2
         (self.n_relations, self.relation_embed_dim) = self.relation_embeddings.weight.shape
-        assert self.entity_embed_dim == self.relation_embed_dim
 
         if graph_model == 'gat':
             gat_config = GatbertConfig(
@@ -238,7 +262,7 @@ class ConcatClassifier(StanceClassifier):
         self.model_type = graph_model
 
         self.pred_head = torch.nn.Linear(2 * self.bert.config.hidden_size + 2 * self.entity_embed_dim, len(Stance), bias=False)
-        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), CNGraph.read(graph))
+        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model), graph)
     
     def get_encoder(self):
         return self.__encoder
@@ -284,9 +308,10 @@ class ConcatClassifier(StanceClassifier):
         Creates samples consisting of a graph with only external information (ConceptNet, AMR, etc.)
         and a separate sequence of tokens. The graph and tokens are totally independent.
         """
-        def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: CNGraph):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast, graph: os.PathLike):
             self.__tokenizer = tokenizer
-            self.__graph = graph
+            self.__uri2id = read_entitites(get_entities_path(graph))
+            self.__total_relations = get_n_relations(graph) + len(SpecialRelation)
 
         @staticmethod
         def get_target_seeds_mask(sample: GraphSample) -> torch.Tensor:
@@ -326,7 +351,7 @@ class ConcatClassifier(StanceClassifier):
         def encode(self, sample: GraphSample):
             assert isinstance(sample, GraphSample)
 
-            input_ids = torch.tensor([[self.__graph.uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
+            input_ids = torch.tensor([[self.__uri2id[node] for node in sample.kb[:MAX_KB_NODES]]], dtype=torch.int64)
             num_kb_nodes = input_ids.shape[-1]
             orig_text_nodes = len(sample.target) + len(sample.context)
             # Only keep edges between two graph concepts
@@ -334,6 +359,8 @@ class ConcatClassifier(StanceClassifier):
             iter_edge = map(lambda e: (0, e.head_node_index - orig_text_nodes, e.tail_node_index - orig_text_nodes, e.relation_id), iter_edge)
             # Filter out edges pointing to truncated nodes
             iter_edge = filter(lambda e: e[1] < num_kb_nodes and e[2] < num_kb_nodes, iter_edge)
+            # Handle negative relation indices
+            iter_edge = map(lambda e: (*e[:-1], e[-1] % self.__total_relations), iter_edge)
             edge_indices = sorted(iter_edge)
             if edge_indices:
                 edge_indices = torch.tensor(edge_indices).transpose(1, 0)
