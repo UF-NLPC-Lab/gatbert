@@ -68,6 +68,11 @@ class MyStanceModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.classifier = classifier
+
+    def on_before_optimizer_step(self, optimizer):
+        for (name, grad) in self.classifier.get_grads():
+            self.log(name, grad)
+
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
 

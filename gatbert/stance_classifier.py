@@ -38,6 +38,9 @@ class StanceClassifier(torch.nn.Module):
     def get_encoder(self) -> Encoder:
         pass
 
+    def get_grads(self):
+        return []
+
 class BertClassifier(StanceClassifier):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
@@ -304,6 +307,19 @@ class ConcatClassifier(StanceClassifier):
         feature_vec = torch.concatenate([target_text_vec, context_text_vec, target_node_vec, context_node_vec], dim=-1)
         logits = self.pred_head(feature_vec)
         return logits
+
+    def get_grads(self):
+        return []
+        weight = self.pred_head.weight
+        grad = weight.grad
+        split_index = 2 * self.bert.config.hidden_size
+        with torch.no_grad():
+            return [
+                ("z_text_weight_norm", torch.linalg.norm(weight[:, :split_index])),
+                ("z_graph_weight_norm", torch.linalg.norm(weight[:, split_index:])),
+                ("z_text_weight_grad_norm", torch.linalg.norm(grad[:, :split_index])),
+                ("z_graph_weight_grad_norm", torch.linalg.norm(grad[:, split_index:]))
+            ]
 
     class Encoder(Encoder):
         """
