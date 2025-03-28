@@ -101,3 +101,8 @@ You will need to update the following fields to run it on your machine:
 - `base.yaml`: `trainer.logger.init_args.save_dir`
 - `raw_data.yaml`: the data paths under `init_args.partitions`
 - `graph_data.yaml`: the data paths under `init_args.partitions`
+
+## Loading a Pre-Trained BERT Classifier
+
+Right now our pipeline only supports exporting BERT models and none of the graph models.
+See [our example](examples/bert_classifier.ipynb) for how to load one.

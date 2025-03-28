@@ -4,7 +4,7 @@ from itertools import product
 import os
 # 3rd Party
 import torch
-from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, AutoConfig, BertForSequenceClassification
+from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast, BertForSequenceClassification
 from transformers.models.bert.modeling_bert import BertConfig
 # Local
 from .gatbert import GatbertModel, GatbertEncoder, GatbertEmbeddings
@@ -42,11 +42,13 @@ class BertClassifier(StanceClassifier):
                  pretrained_model: str = DEFAULT_MODEL):
         super().__init__()
 
-        self.config = BertConfig.from_pretrained(pretrained_model)
-        self.config.num_labels = len(Stance)
+        label2id = {s.name:s.value for s in Stance}
+        id2label = {v:k for k,v in label2id.items()}
+        self.config = BertConfig.from_pretrained(pretrained_model, id2label=id2label, label2id=label2id)
         self.bert = BertForSequenceClassification.from_pretrained(pretrained_model, config=self.config)
+        self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
 
-        self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model))
+        self.__encoder = self.Encoder(self.tokenizer)
 
     def get_encoder(self):
         return self.__encoder
