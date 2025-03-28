@@ -68,8 +68,6 @@ class MyStanceModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.classifier = classifier
-        # FIXME: Do this in a cleaner way
-        self.train()
     def forward(self, *args, **kwargs):
         return self.classifier(*args, **kwargs)
 

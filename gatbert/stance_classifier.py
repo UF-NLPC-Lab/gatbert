@@ -48,6 +48,13 @@ class BertClassifier(StanceClassifier):
         self.bert = BertForSequenceClassification.from_pretrained(pretrained_model, config=self.config)
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
 
+        # None of our other models use a bias value for the prediction head
+        # The bert config doesn't let us enable or disable the bias, so we just set it to 0
+        # and never let it get updated during training
+        pred_bias = self.bert.classifier.bias
+        pred_bias.data[:] = 0.
+        pred_bias.requires_grad = False
+
         self.__encoder = self.Encoder(self.tokenizer)
 
     def get_encoder(self):
