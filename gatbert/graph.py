@@ -31,6 +31,21 @@ def get_bert_triples_path(graph_root: os.PathLike) -> os.PathLike:
 
 type AdjMat = Dict[int, List[Tuple[int, int]]]
 
+def read_bert_adj_mat(triples_path: os.PathLike, sim_threshold: float = 0.5):
+    with open_gzip_or_plain(triples_path) as r:
+        reader = csv.DictReader(r, delimiter='\t')
+        reader = list(reader)
+        triples = [
+            (int(row['head']), int(row['tail']), int(row['relation']))
+            for row in reader
+            if float(row['similarity']) >= sim_threshold
+        ]
+    adj = defaultdict(list)
+    for (head, tail, rel) in triples:
+        adj[head].append((tail, rel))
+    adj = dict(adj)
+    return adj
+
 def read_adj_mat(triples_path: os.PathLike, make_inverse_rels=True) -> AdjMat:
     # TODO: don't use pandas for this
     edge_df = pd.read_csv(triples_path, compression='gzip', delimiter='\t')

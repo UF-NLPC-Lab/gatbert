@@ -13,7 +13,7 @@ from tqdm import tqdm
 from .constants import DEFAULT_MAX_DEGREE, CN_URI_PATT
 from .data import parse_ez_stance, PretokenizedSample, get_default_pretokenize, parse_vast
 from .graph_sample import GraphSample
-from .graph import AdjMat, get_triples_path, get_bert_triples_path, read_adj_mat, update_adj_mat, read_entitites, get_entities_path
+from .graph import AdjMat, get_triples_path, get_bert_triples_path, read_adj_mat, update_adj_mat, read_entitites, get_entities_path, read_bert_adj_mat
 
 def make_seed_dict(tok2id, tokens: List[str]):
     rval = []
@@ -158,9 +158,10 @@ def main(raw_args=None):
     parser.add_argument("--ezstance", type=str, metavar="input.csv", help="File containing stance data from the EZStance dataset")
     parser.add_argument("--vast",     type=str, metavar="input.csv", help="File containing stance data from the VAST dataset")
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
-    parser.add_argument("--graph",    type=str, metavar="graph.json|pykeen_outdir/", help="File containing graph data written with .extract_cn")
+    parser.add_argument("--graph",    type=str, metavar="graph_dir/", required=True, help="Directory containing CN and bert triples")
 
     parser.add_argument("--bert-sim", action="store_true", help="Add BERT similarity edges")
+    parser.add_argument("--bert-sim-thresh", type=float, default=0.5, help="Similarity threshold to include edge when using --bert-sim")
     parser.add_argument("--sample", type=get_tag_func, default=bridge_sample, metavar="bridge|naive", help="How to sample nodes from the CN graph")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
     args = parser.parse_args(raw_args)
@@ -190,7 +191,7 @@ def main(raw_args=None):
     id2ent = {v:k for k,v in ent2id.items()}
     adj = read_adj_mat(get_triples_path(args.graph))
     if args.bert_sim:
-        bert_adj = read_adj_mat(get_bert_triples_path(args.graph), make_inverse_rels=False)
+        bert_adj = read_bert_adj_mat(get_bert_triples_path(args.graph), sim_threshold=args.bert_sim_thresh)
         update_adj_mat(adj, bert_adj)
 
     tag_func = args.sample
