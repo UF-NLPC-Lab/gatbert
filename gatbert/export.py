@@ -2,6 +2,7 @@
 import os
 import pathlib
 import importlib
+import sys
 # 3rd Party
 import torch
 import yaml
@@ -45,6 +46,6 @@ def export(model_dir: os.PathLike, out_dir: os.PathLike):
         raise ValueError("Only BertClassifier supported")
 
 if __name__ == "__main__":
-    model_dir = pathlib.Path("/home/ethanlmines/blue_dir/experiments/lightning_logs/bert_vast_1743103279/")
-    export(model_dir, "./doof")
-    pass
+    model_dir = sys.argv[1]
+    out_dir = sys.argv[2]
+    export(model_dir, out_dir)
