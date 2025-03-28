@@ -24,6 +24,7 @@ def load_kb_embeddings(graph_path: os.PathLike, pretrained_relations=False) -> T
     expected_relations = get_n_relations(graph_path)
     total_relations = expected_relations + len(SpecialRelation)
     rel_embeddings = torch.nn.Embedding(total_relations, entity_embeddings.weight.shape[1])
+    # TODO: Should I initialize the special relations with 0's like I do in EdgeEmbeddings ...?
     if pretrained_relations and os.path.exists(rel_path):
         embedding_obj = torch.load(rel_path, weights_only=False)
         pretrained_embeds = embedding_obj.weight.data
