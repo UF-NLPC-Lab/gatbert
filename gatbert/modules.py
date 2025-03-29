@@ -1,3 +1,4 @@
+import abc
 # 3rd Party
 import torch
 import lightning as L
@@ -11,6 +12,11 @@ class StanceModule(L.LightningModule):
 
         self.__ce = torch.nn.CrossEntropyLoss()
         self.__calc = F1Calc()
+
+    @property
+    @abc.abstractmethod
+    def encoder(self) -> Encoder:
+        pass
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-5)
@@ -33,7 +39,8 @@ class StanceModule(L.LightningModule):
 
     def __eval_step(self, batch, batch_idx):
         labels = batch.pop('stance').view(-1)
-        logits = self(**batch)
+        rval = self(**batch)
+        logits = rval[0] if isinstance(rval, tuple) else rval
         probs = torch.nn.functional.softmax(logits, dim=-1)
         self.__calc.record(probs, labels)
     def __eval_finish(self, stage):
@@ -54,6 +61,8 @@ class StanceModule(L.LightningModule):
     def on_test_epoch_start(self):
         self.eval()
 
+
+
 class MyStanceModule(StanceModule):
     """
     Simple wrapper around my non-Lightning model classes.
@@ -68,6 +77,11 @@ class MyStanceModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
         self.classifier = classifier
+
+
+    @property
+    def encoder(self) -> Encoder:
+        return self.classifier.get_encoder()
 
     def on_before_optimizer_step(self, optimizer):
         for (name, grad) in self.classifier.get_grads():

@@ -1,17 +1,14 @@
 # STL
 import os
-import json
-import gzip
 import csv
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict
 from collections import defaultdict
-import dataclasses
-import pathlib
 # 3rd Party
+import torch
 import pandas as pd
 # Local
-from .constants import CN_URI_PATT
 from .utils import open_gzip_or_plain
+from .constants import SpecialRelation
 
 EdgeList = List[Tuple[int, int, int]]
 NodeList = List[int]
@@ -92,3 +89,21 @@ def read_relations(p: os.PathLike):
             rel2id[label] = forward_id
             rel2id[f'{label}/inv'] = forward_id + 1
     return rel2id
+
+def get_n_relations(graph_path: os.PathLike):
+    return len(read_relations(get_relations_path(graph_path)))
+
+def load_kb_embeddings(graph_path: os.PathLike, pretrained_relations=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    entity_embeddings =  torch.load(get_entity_embeddings_path(graph_path), weights_only=False)
+    rel_path = get_relation_embeddings_path(graph_path)
+
+    expected_relations = get_n_relations(graph_path)
+    total_relations = expected_relations + len(SpecialRelation)
+    rel_embeddings = torch.nn.Embedding(total_relations, entity_embeddings.weight.shape[1])
+    # TODO: Should I initialize the special relations with 0's like I do in EdgeEmbeddings ...?
+    if pretrained_relations and os.path.exists(rel_path):
+        embedding_obj = torch.load(rel_path, weights_only=False)
+        pretrained_embeds = embedding_obj.weight.data
+        assert pretrained_embeds.shape == (expected_relations, entity_embeddings.weight.shape[1])
+        rel_embeddings.weight.data[:expected_relations] = pretrained_embeds
+    return entity_embeddings, rel_embeddings
