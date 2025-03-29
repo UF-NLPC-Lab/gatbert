@@ -8,7 +8,7 @@ import torch
 import yaml
 # Local
 from .stance_classifier import BertClassifier
-from .modules import MyStanceModule
+from .base_module import MyStanceModule
 
 def export(model_dir: os.PathLike, out_dir: os.PathLike):
     model_dir = pathlib.Path(model_dir)

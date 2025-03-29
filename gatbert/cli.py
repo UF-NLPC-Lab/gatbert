@@ -2,10 +2,9 @@
 from lightning.pytorch.cli import LightningCLI
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 # Local
-from .modules import StanceModule, MyStanceModule
-from .concat_module import ConcatCgcnModule, ConcatGatModule
+from .base_module import StanceModule
+from .modules import *
 from .data_modules import *
-from .stance_classifier import *
 
 class CustomCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):

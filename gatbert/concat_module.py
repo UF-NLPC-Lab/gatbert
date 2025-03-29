@@ -7,7 +7,7 @@ import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
 # Local
 from .graph_sample import GraphSample
-from .modules import StanceModule
+from .base_module import StanceModule
 from .constants import DEFAULT_MODEL, Stance, MAX_KB_NODES, SpecialRelation
 from .encoder import Encoder, collate_ids, keyed_pad, collate_edge_indices, keyed_scalar_stack, encode_text
 from .gatbert import GatbertConfig, GatbertEncoder
