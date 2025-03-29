@@ -4,7 +4,7 @@ import torch
 import lightning as L
 # Local
 from .f1_calc import F1Calc
-from .stance_classifier import *
+from .encoder import Encoder
 
 class StanceModule(L.LightningModule):
     def __init__(self):
@@ -16,7 +16,7 @@ class StanceModule(L.LightningModule):
     @property
     @abc.abstractmethod
     def encoder(self) -> Encoder:
-        pass
+        raise NotImplementedError
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-5)
@@ -60,33 +60,3 @@ class StanceModule(L.LightningModule):
         self.eval()
     def on_test_epoch_start(self):
         self.eval()
-
-
-
-class MyStanceModule(StanceModule):
-    """
-    Simple wrapper around my non-Lightning model classes.
-    
-    I want maximum configurability of the model classes,
-    but I also don't want them to depend on Lightning itself.
-    This wrapper allows for that.
-    """
-    def __init__(self,
-                 classifier: StanceClassifier,
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        self.classifier = classifier
-
-
-    @property
-    def encoder(self) -> Encoder:
-        return self.classifier.get_encoder()
-
-    def on_before_optimizer_step(self, optimizer):
-        for (name, grad) in self.classifier.get_grads():
-            self.log(name, grad)
-
-    def forward(self, *args, **kwargs):
-        return self.classifier(*args, **kwargs)
-

@@ -77,6 +77,20 @@ class ConcatModule(StanceModule):
         self.log("loss", total_loss)
         return total_loss
 
+    def get_grads(self):
+        return []
+        weight = self.pred_head.weight
+        grad = weight.grad
+        split_index = 2 * self.bert.config.hidden_size
+        with torch.no_grad():
+            return [
+                ("z_text_weight_norm", torch.linalg.norm(weight[:, :split_index])),
+                ("z_graph_weight_norm", torch.linalg.norm(weight[:, split_index:])),
+                ("z_text_weight_grad_norm", torch.linalg.norm(grad[:, :split_index])),
+                ("z_graph_weight_grad_norm", torch.linalg.norm(grad[:, split_index:]))
+            ]
+
+
     def forward(self,
                 text,
                 target_text_mask,
