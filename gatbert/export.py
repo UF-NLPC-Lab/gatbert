@@ -7,8 +7,7 @@ import sys
 import torch
 import yaml
 # Local
-from .stance_classifier import BertClassifier
-from .modules import MyStanceModule
+from .bert_module import BertModule
 
 def export(model_dir: os.PathLike, out_dir: os.PathLike):
     model_dir = pathlib.Path(model_dir)
@@ -18,9 +17,9 @@ def export(model_dir: os.PathLike, out_dir: os.PathLike):
     with open(config_path, 'r') as f:
         yaml_obj = yaml.safe_load(f)
 
-    classifier_sec = yaml_obj['model']['classifier']
-    class_path = classifier_sec['class_path']
-    init_args = classifier_sec['init_args']
+    model_sec = yaml_obj['model']
+    class_path = model_sec['class_path']
+    init_args = model_sec['init_args']
 
     checkpoint_dir = model_dir.joinpath("checkpoints")
     checkpoint_paths = os.listdir(checkpoint_dir)
@@ -32,18 +31,17 @@ def export(model_dir: os.PathLike, out_dir: os.PathLike):
     module = importlib.import_module(module_name)
     cls = getattr(module, base_name)
 
-    classifier = cls(**init_args)
-    module = MyStanceModule(classifier)
+    module = cls(**init_args)
     state_dict = torch.load(checkpoint_path, weights_only=True)
     module.load_state_dict(state_dict['state_dict'])
 
-    if isinstance(classifier, BertClassifier):
-        bert = classifier.bert
-        tokenizer = classifier.tokenizer
+    if isinstance(module, BertModule):
+        bert = module.bert
+        tokenizer = module.tokenizer
         bert.save_pretrained(out_dir)
         tokenizer.save_pretrained(out_dir)
     else:
-        raise ValueError("Only BertClassifier supported")
+        raise ValueError("Only BertModule supported currently")
 
 if __name__ == "__main__":
     model_dir = sys.argv[1]

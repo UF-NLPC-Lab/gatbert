@@ -2,9 +2,9 @@
 from lightning.pytorch.cli import LightningCLI
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 # Local
+from .base_module import StanceModule
 from .modules import *
 from .data_modules import *
-from .stance_classifier import *
 
 class CustomCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
@@ -27,7 +27,7 @@ def cli_main(**cli_kwargs):
     )
 
     return CustomCLI(
-        model_class=MyStanceModule, subclass_mode_model=False,
+        model_class=StanceModule, subclass_mode_model=True,
         datamodule_class=StanceDataModule, subclass_mode_data=True,
         trainer_defaults={
             "max_epochs": 1000,
