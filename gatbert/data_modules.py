@@ -7,7 +7,7 @@ import lightning as L
 from typing import Dict, Tuple, Optional, List
 from .data import MapDataset, parse_ez_stance, parse_graph_tsv, parse_semeval, parse_vast
 from .constants import DEFAULT_BATCH_SIZE
-from .stance_classifier import *
+from .hybrid_module import *
 from .types import CorpusType, Transform
 from .utils import map_func_gen
 
