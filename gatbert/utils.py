@@ -9,6 +9,12 @@ from typing import List, Any
 import time
 from contextlib import contextmanager
 
+def exists_gzip_or_plain(path: os.PathLike):
+    str_path = str(path)
+    gz_path = str_path if str_path.endswith(".gz") else str_path + ".gz"
+    short_path = gz_path[:-3]
+    return os.path.exists(gz_path) or os.path.exists(short_path)
+
 @contextmanager
 def open_gzip_or_plain(path: os.PathLike, mode='r'):
     str_path = str(path)
