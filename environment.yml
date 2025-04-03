@@ -12,8 +12,10 @@ dependencies:
   - torchmetrics
   - transformers
   - lightning
-  - python-graphviz
   - accelerate>=0.26.0
+
+  - spacy
+  - spacy-model-en_core_web_sm
 
   - plotly
   - nbformat>=4.2.0
