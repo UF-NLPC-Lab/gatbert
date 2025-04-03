@@ -100,7 +100,7 @@ if __name__ == "__main__":
             # Get an edge we don't already have
             # Turns out rng.choice(n_nodes) is much quicker than rng.choice(node_ids)
             candidate = (rng.choice(n_nodes), rng.choice(n_nodes))
-            while candidate in chosen_pos or candidate in chosen_neg:
+            while candidate in all_pos or candidate in chosen_neg:
                 candidate = (rng.choice(node_ids), rng.choice(node_ids))
             chosen_neg.add(candidate)
             progress_bar.update()
