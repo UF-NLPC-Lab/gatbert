@@ -1,6 +1,5 @@
-from typing import Iterable
-import pathlib
 import os
+import io
 import gzip
 import logging
 import operator
@@ -15,21 +14,29 @@ def exists_gzip_or_plain(path: os.PathLike):
     short_path = gz_path[:-3]
     return os.path.exists(gz_path) or os.path.exists(short_path)
 
+class GzipWrapper:
+    def __init__(self, f):
+        self.f = f
+    def write(self, str_data):
+        return self.f.write(str_data.encode())
+
 @contextmanager
-def open_gzip_or_plain(path: os.PathLike, mode='r'):
+def open_gzip_or_plain(path: os.PathLike):
     str_path = str(path)
     gz_path = str_path if str_path.endswith(".gz") else str_path + ".gz"
     short_path = gz_path[:-3]
 
     if os.path.exists(gz_path):
-        with gzip.open(gz_path, mode=mode) as f:
-            f = map(lambda row: row.decode(), f)
+        with gzip.open(gz_path, 'rb') as f:
             try:
-                yield f
+                buffer = io.StringIO()
+                buffer.write(f.read().decode())
+                buffer.seek(0)
+                yield buffer
             finally:
-                pass
+                buffer.close()
     else:
-        with open(short_path, mode=mode) as f:
+        with open(short_path, 'r') as f:
             try:
                 yield f
             finally:
