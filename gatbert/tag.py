@@ -2,6 +2,7 @@
 Tag a set of stance files with CN graph nodes
 """
 # STL
+import pathlib
 from typing import Dict
 import argparse
 import sys
@@ -160,6 +161,8 @@ def main(raw_args=None):
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("--graph",    type=str, metavar="graph_dir/", required=True, help="Directory containing CN and bert triples")
 
+    parser.add_argument("--seeds", type=pathlib.Path, metavar="seeds.txt")
+
     parser.add_argument("--bert-sim", action="store_true", help="Add BERT similarity edges")
     parser.add_argument("--bert-sim-thresh", type=float, default=0.5, help="Similarity threshold to include edge when using --bert-sim")
     parser.add_argument("--sample", type=get_tag_func, default=bridge_sample, metavar="bridge|naive", help="How to sample nodes from the CN graph")
@@ -187,6 +190,10 @@ def main(raw_args=None):
     ent2id = read_entitites(get_entities_path(args.graph))
     matches = map(lambda pair: (entity_to_tok(pair[0]), pair[1]), ent2id.items())
     tok2id= {tok:id for tok,id in matches if tok}
+    if args.seeds:
+        with open(args.seeds, 'r') as r:
+            permitted_seeds = set(l.strip() for l in r)
+        tok2id = {tok:id for tok,id in tok2id.items() if tok in permitted_seeds}
 
     id2ent = {v:k for k,v in ent2id.items()}
     adj = read_adj_mat(get_triples_path(args.graph))
