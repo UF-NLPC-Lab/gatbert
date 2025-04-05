@@ -4,9 +4,30 @@ import gzip
 import logging
 import operator
 from functools import reduce
-from typing import List, Any
+from collections import Counter
+from typing import List, Any, Iterable
 import time
 from contextlib import contextmanager
+
+class Dictionary:
+    """
+    Emulation of Gensim Dictionary's main functionality
+    """
+    def __init__(self):
+        self.__dfs = Counter()
+        self.__n_docs = 0
+    def update(self, doc: Iterable[str]):
+        terms = list(doc)
+        self.__dfs.update(set(terms))
+        self.__n_docs += 1
+    def filter_extremes(self, no_below=5, no_above=0.5, keep_n=100000, keep_tokens=None):
+        abs_no_above = int(no_above * self.__n_docs) if no_above is not None else self.__n_docs
+        no_below = 0 if no_below is None else no_below
+        good_ids = [term for term,count in self.__dfs.items() if no_below <= count <= abs_no_above]
+        good_ids = sorted(good_ids, key=lambda x: self.__dfs[x], reverse=True)
+        if keep_n is not None:
+            good_ids = good_ids[:keep_n]
+        return good_ids
 
 def exists_gzip_or_plain(path: os.PathLike):
     str_path = str(path)

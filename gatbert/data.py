@@ -60,7 +60,7 @@ def parse_vast(csv_path) -> Generator[Sample, None, None]:
        "2": Stance.NONE
     }
     # TODO: Do we still want to use "post", or one of their preprocessed versions?
-    with open(csv_path, 'r', encoding='latin-1') as r:
+    with open(csv_path, 'r') as r:
         yield from map(lambda row: Sample(row['post'], row['topic_str'], strstance2enum[row['label']]), csv.DictReader(r))
 
 def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
