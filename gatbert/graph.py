@@ -5,7 +5,7 @@ from typing import List, Tuple, Dict
 from collections import defaultdict
 # 3rd Party
 import torch
-import pandas as pd
+import numpy as np
 # Local
 from .utils import open_gzip_or_plain
 from .constants import SpecialRelation
@@ -26,6 +26,15 @@ def get_triples_path(graph_root: os.PathLike) -> os.PathLike:
 def get_bert_triples_path(graph_root: os.PathLike) -> os.PathLike:
     return os.path.join(graph_root, 'bert_triples.tsv.gz')
 
+class GraphPaths:
+    def __init__(self, graph_root: os.PathLike):
+        self.entity_embeddings_path = os.path.join(graph_root, 'entities.pkl')
+        self.relation_embeddings_path = os.path.join(graph_root, 'relations.pkl')
+        self.entities_path = os.path.join(graph_root, "entity_to_id.tsv.gz")
+        self.relations_path = os.path.join(graph_root, "relation_to_id.tsv.gz")
+        self.triples_path = os.path.join(graph_root, 'numeric_triples.tsv.gz')
+        self.bert_triples_path = os.path.join(graph_root, 'bert_triples.tsv.gz')
+
 type AdjMat = Dict[int, List[Tuple[int, int]]]
 
 def read_bert_adj_mat(triples_path: os.PathLike, sim_threshold: float = 0.5):
@@ -44,20 +53,28 @@ def read_bert_adj_mat(triples_path: os.PathLike, sim_threshold: float = 0.5):
     return adj
 
 def read_adj_mat(triples_path: os.PathLike, make_inverse_rels=True) -> AdjMat:
-    # TODO: don't use pandas for this
-    edge_df = pd.read_csv(triples_path, compression='gzip', delimiter='\t')
-    heads = edge_df['head'].apply(int) # head is also a DF method. Use [] to circumvent that
-    tails = edge_df['tail'].apply(int)  # Same for tail
+    heads = []
+    tails = []
+    rels = []
+    with open_gzip_or_plain(triples_path) as r:
+        reader = csv.DictReader(r, delimiter='\t')
+        reader = list(reader)
+        for row in reader:
+            heads.append(int(row['head']))
+            tails.append(int(row['tail']))
+            rels.append(int(row['relation']))
+    heads = np.array(heads)
+    tails = np.array(tails)
+    rels = np.array(rels)
 
     adj = defaultdict(list)
     if make_inverse_rels:
-        rels = 2 * edge_df.relation.apply(int)
+        rels = 2 * rels
         inv_rels = rels + 1
         for (head, tail, rel, inv_rel) in zip(heads, tails, rels, inv_rels):
             adj[head].append((tail, rel))
             adj[tail].append((head, inv_rel))
     else:
-        rels = edge_df.relation.apply(int)
         for (head, tail, rel) in zip(heads, tails, rels):
             adj[head].append((tail, rel))
 

@@ -2,6 +2,7 @@
 Tag a set of stance files with CN graph nodes
 """
 # STL
+import pathlib
 from typing import Dict
 import argparse
 import sys
@@ -150,7 +151,9 @@ def main(raw_args=None):
         if name == "bridge":
             return bridge_sample
         elif name == "naive":
-            return naive_sample
+            def wrapper(*args, **kwargs):
+                return naive_sample(*args, **kwargs, max_degree=cli_args.max_degree)
+            return wrapper
         else:
             raise ValueError(f"Invalid --sample {name}")
 
@@ -160,19 +163,22 @@ def main(raw_args=None):
     parser.add_argument("--semeval",  type=str, metavar="input.txt", help="File containing stance data from SemEval2016-Task6")
     parser.add_argument("--graph",    type=str, metavar="graph_dir/", required=True, help="Directory containing CN and bert triples")
 
+    parser.add_argument("--max-degree", type=int, default=DEFAULT_MAX_DEGREE)
+    parser.add_argument("--seeds", type=pathlib.Path, metavar="seeds.txt")
+
     parser.add_argument("--bert-sim", action="store_true", help="Add BERT similarity edges")
     parser.add_argument("--bert-sim-thresh", type=float, default=0.5, help="Similarity threshold to include edge when using --bert-sim")
     parser.add_argument("--sample", type=get_tag_func, default=bridge_sample, metavar="bridge|naive", help="How to sample nodes from the CN graph")
     parser.add_argument("-o",         type=str, required=True, metavar="output_file.tsv", help="TSV file containing samples with associated CN nodes")
-    args = parser.parse_args(raw_args)
+    cli_args = parser.parse_args(raw_args)
 
-    if sum([bool(args.ezstance), bool(args.vast), bool(args.semeval)]) != 1:
+    if sum([bool(cli_args.ezstance), bool(cli_args.vast), bool(cli_args.semeval)]) != 1:
         print("Must select exactly one of --ezstance, --vast, or --semeval", file=sys.stderr)
         sys.exit(1)
-    if args.ezstance:
-        sample_gen = parse_ez_stance(args.ezstance)
-    elif args.vast:
-        sample_gen = parse_vast(args.vast)
+    if cli_args.ezstance:
+        sample_gen = parse_ez_stance(cli_args.ezstance)
+    elif cli_args.vast:
+        sample_gen = parse_vast(cli_args.vast)
     else:
         raise RuntimeError("--semeval not yet supported")
 
@@ -184,23 +190,27 @@ def main(raw_args=None):
         return match_obj.group(1) if match_obj else None
 
     # Read graph data from disk
-    ent2id = read_entitites(get_entities_path(args.graph))
+    ent2id = read_entitites(get_entities_path(cli_args.graph))
     matches = map(lambda pair: (entity_to_tok(pair[0]), pair[1]), ent2id.items())
     tok2id= {tok:id for tok,id in matches if tok}
+    if cli_args.seeds:
+        with open(cli_args.seeds, 'r') as r:
+            permitted_seeds = set(l.strip() for l in r)
+        tok2id = {tok:id for tok,id in tok2id.items() if tok in permitted_seeds}
 
     id2ent = {v:k for k,v in ent2id.items()}
-    adj = read_adj_mat(get_triples_path(args.graph))
-    if args.bert_sim:
-        bert_adj = read_bert_adj_mat(get_bert_triples_path(args.graph), sim_threshold=args.bert_sim_thresh)
+    adj = read_adj_mat(get_triples_path(cli_args.graph))
+    if cli_args.bert_sim:
+        bert_adj = read_bert_adj_mat(get_bert_triples_path(cli_args.graph), sim_threshold=cli_args.bert_sim_thresh)
         update_adj_mat(adj, bert_adj)
 
-    tag_func = args.sample
+    tag_func = cli_args.sample
 
     samples = list(map(get_default_pretokenize(), sample_gen))
     processed = []
     for sample in tqdm(samples):
         processed.append(tag_func(sample, tok2id, id2ent, adj).to_row())
-    with open(args.o, 'w', encoding='utf-8') as w:
+    with open(cli_args.o, 'w', encoding='utf-8') as w:
         csv.writer(w, delimiter='\t').writerows(processed)
 
 if __name__ == "__main__":
