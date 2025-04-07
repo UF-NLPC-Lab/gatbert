@@ -26,49 +26,28 @@ class KBAttention(torch.nn.Module):
                  kb_dim: int):
         super().__init__()
 
-        # self.q_proj = torch.nn.Linear(text_dim, kb_dim, bias=False)
-        # self.k_proj = torch.nn.Linear(kb_dim, kb_dim, bias=False)
-        # self.v_proj = torch.nn.Linear(kb_dim, kb_dim, bias=False)
-        # self.out_proj = torch.nn.Linear(kb_dim, kb_dim, bias=False)
+        self.q_proj = torch.nn.Linear(text_dim, kb_dim, bias=False)
+        self.k_proj = torch.nn.Linear(kb_dim, kb_dim, bias=False)
+        self.v_proj = torch.nn.Linear(kb_dim, kb_dim, bias=False)
+        self.out_proj = torch.nn.Linear(kb_dim, kb_dim, bias=False)
         self.text_dim = text_dim
         self.kb_dim = kb_dim
-
-
-        self.att = torch.nn.MultiheadAttention(embed_dim=text_dim, num_heads=1, bias=False, batch_first=True, kdim=kb_dim, vdim=kb_dim)
+        self.register_buffer("dp_scale", torch.sqrt(torch.tensor(self.kb_dim)))
 
     def forward(self, text: torch.Tensor, kb: torch.Tensor):
-        attn_output, att_weights = self.att(text, kb, kb)
-        return attn_output
-
         Q = self.q_proj(text)
         K = self.k_proj(kb)
 
-        Q_scaled = Q / torch.sqrt(Q.shape[-1])
-        act = torch.matmul(Q, K.transpose(-1, -2))
+        Q_scaled = Q / self.dp_scale
+        act = torch.matmul(Q_scaled, K.transpose(-1, -2))
         weights = torch.softmax(act, dim=-1)
 
-        return torch.nn.functional.multi_head_attention_forward(
-            query=text,
-            key=kb,
-            value=kb,
-            embed_dim_to_check=self.kb_dim,
-            num_heads=1,
-            in_proj_weight=None,
-            in_proj_bias=None,
-            bias_k=None,
-            bias_v=None,
-            add_zero_attn=False,
-            dropout_p=0.0,
-            out_proj_weight=self.out_proj.weight,
-            out_proj_bias=None,
-            training=self.training,
-            need_weights=False,
+        V = self.v_proj(kb)
+        att_vals = torch.matmul(weights, V)
 
-            use_separate_proj_weight=True,
-            q_proj_weight=self.q_proj.weight,
-            k_proj_weight=self.k_proj.weight,
-            v_proj_weight=self.v_proj.weight,
-        )
+        # TODO: add dropout?
+
+        return att_vals
 
 class ConcatModule(StanceModule):
 
@@ -99,8 +78,7 @@ class ConcatModule(StanceModule):
         self.context_att = KBAttention(self.bert.config.hidden_size, node_embed_dim)
         self.target_att = KBAttention(self.bert.config.hidden_size, node_embed_dim)
 
-        # self.graph_head = torch.nn.Linear(2 * node_embed_dim,        len(Stance), bias=False)
-        self.graph_head = torch.nn.Linear(2 * self.bert.config.hidden_size,        len(Stance), bias=False)
+        self.graph_head = torch.nn.Linear(2 * node_embed_dim,        len(Stance), bias=False)
         self.text_head  = torch.nn.Linear(2 * self.bert.config.hidden_size, len(Stance), bias=False)
         self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model))
 
