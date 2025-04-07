@@ -4,14 +4,17 @@ import os
 import torch
 import pykeen
 import pykeen.datasets
+from pykeen.triples import CoreTriplesFactory
 
-def save_all_triples(ds: pykeen.datasets.Dataset, out_path: os.PathLike):
+def get_all_triples(ds: pykeen.datasets.Dataset) -> CoreTriplesFactory:
     concat_tripples = torch.concatenate([
         ds.training.mapped_triples,
         ds.validation.mapped_triples,
         ds.testing.mapped_triples
     ])
-    concatenated_factory = ds.training.clone_and_exchange_triples(
+    return ds.training.clone_and_exchange_triples(
         mapped_triples=concat_tripples
     )
-    return concatenated_factory.to_path_binary(out_path)
+
+def save_all_triples(ds: pykeen.datasets.Dataset, out_path: os.PathLike):
+    return get_all_triples(ds).to_path_binary(out_path)
