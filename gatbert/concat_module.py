@@ -1,24 +1,18 @@
 # STL
-import abc
 import os
-from typing import List, Dict, Tuple
+from typing import List, Dict
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
-from pykeen.datasets import ConceptNet
 from pykeen.models.unimodal.compgcn import CompGCN
 from pykeen.nn.representation import SingleCompGCNRepresentation
+from pykeen.triples.triples_factory import TriplesFactory
 # Local
 from .sample import Sample
-from .graph_sample import GraphSample
 from .base_module import StanceModule
-from .constants import DEFAULT_MODEL, Stance, MAX_KB_NODES, SpecialRelation
-from .encoder import Encoder, collate_ids, keyed_pad, collate_edge_indices, keyed_scalar_stack, encode_text
-from .gatbert import GatbertConfig, GatbertEncoder
+from .constants import DEFAULT_MODEL, Stance
+from .encoder import Encoder, collate_ids, keyed_pad, keyed_scalar_stack, encode_text
 from .types import TensorDict
-from .cgcn import Cgcn
-from .graph import read_entitites, load_kb_embeddings, get_entities_path, get_n_relations
-from .pykeen_utils import get_all_triples
 
 class KBAttention(torch.nn.Module):
     def __init__(self,
@@ -52,7 +46,7 @@ class KBAttention(torch.nn.Module):
 class ConcatModule(StanceModule):
 
     def __init__(self,
-                 cn_path: os.PathLike,
+                 graph_dir: os.PathLike,
                  pretrained_model: str = DEFAULT_MODEL,
                  joint_loss: bool = False,
                  num_graph_layers: int = 2,
@@ -68,9 +62,11 @@ class ConcatModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
 
+        triples_factory = TriplesFactory.from_path_binary(graph_dir)
+
         cgcn = CompGCN(
             embedding_dim=node_embed_dim,
-            triples_factory=get_all_triples(ConceptNet(name=cn_path, create_inverse_triples=True))
+            triples_factory=triples_factory,
         )
         self.cgcn: SingleCompGCNRepresentation = cgcn.entity_representations[0]
 
