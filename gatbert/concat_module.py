@@ -3,6 +3,7 @@ import os
 from typing import List, Dict
 import logging
 import csv
+import time
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
@@ -16,6 +17,7 @@ from .constants import DEFAULT_MODEL, Stance
 from .encoder import Encoder, collate_ids, keyed_pad, keyed_scalar_stack, encode_text
 from .types import TensorDict
 from .graph import GraphPaths
+from .utils import time_block
 
 class KBAttention(torch.nn.Module):
     def __init__(self,
@@ -92,7 +94,10 @@ class ConcatModule(StanceModule):
         cgcn = CompGCN(
             embedding_dim=node_embed_dim,
             triples_factory=triples_factory,
-            encoder_kwargs=dict(num_layers=num_graph_layers)
+            encoder_kwargs=dict(
+                num_layers=num_graph_layers,
+                layer_kwargs=dict(composition="SubtractionCompositionModule")
+            ),
         )
         self.cgcn: SingleCompGCNRepresentation = cgcn.entity_representations[0]
         if os.path.exists(graph_paths.entity_embeddings_path):
