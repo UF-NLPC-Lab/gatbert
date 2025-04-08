@@ -2,6 +2,7 @@
 import os
 from typing import List, Dict
 import logging
+import csv
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
@@ -67,9 +68,31 @@ class ConcatModule(StanceModule):
         graph_paths = GraphPaths(graph_dir)
         triples_factory = TriplesFactory.from_path_binary(graph_dir)
 
+        target_inds_l = []
+        context_inds_l = []
+        ent2id = triples_factory.entity_to_id
+        with open(graph_paths.seeds_path, 'r') as r:
+            for (seed, in_target, in_context) in csv.reader(r, delimiter='\t'):
+                if seed not in ent2id:
+                    print(f"Discarding {seed}")
+                    continue
+                in_target = int(in_target)
+                in_context = int(in_context)
+                (index,) = triples_factory.entities_to_ids([seed])
+                if in_target:
+                    target_inds_l.append(index)
+                if in_context:
+                    context_inds_l.append(index)
+        target_inds_l = sorted(target_inds_l)
+        context_inds_l = sorted(context_inds_l)
+
+        self.register_buffer("target_inds", torch.tensor(target_inds_l, dtype=torch.long))
+        self.register_buffer("context_inds", torch.tensor(context_inds_l, dtype=torch.long))
+
         cgcn = CompGCN(
             embedding_dim=node_embed_dim,
             triples_factory=triples_factory,
+            encoder_kwargs=dict(num_layers=num_graph_layers)
         )
         self.cgcn: SingleCompGCNRepresentation = cgcn.entity_representations[0]
         if os.path.exists(graph_paths.entity_embeddings_path):
@@ -92,7 +115,6 @@ class ConcatModule(StanceModule):
         self.text_head  = torch.nn.Linear(2 * self.bert.config.hidden_size, len(Stance), bias=False)
         self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model))
 
-        # Load a seed mask
 
     @property
     def encoder(self) -> Encoder:
@@ -136,11 +158,13 @@ class ConcatModule(StanceModule):
         target_text_vec = self.masked_average(target_text_mask, hidden_states)
         context_text_vec = self.masked_average(context_text_mask, hidden_states)
 
-        # FIXME: Use seed mask to split these into H_target and H_context
         graph_encodings = self.cgcn()
 
-        target_node_vec = self.target_att(target_text_vec, graph_encodings)
-        context_node_vec = self.context_att(context_text_vec, graph_encodings)
+        target_seed_encodings = graph_encodings[self.target_inds]
+        target_node_vec = self.target_att(target_text_vec, target_seed_encodings)
+
+        context_seed_encodings = graph_encodings[self.context_inds]
+        context_node_vec = self.context_att(context_text_vec, context_seed_encodings)
 
         text_feature_vec = torch.concatenate([target_text_vec, context_text_vec], dim=-1)
         graph_feature_vec = torch.concatenate([target_node_vec, context_node_vec], dim=-1)
