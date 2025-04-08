@@ -85,8 +85,8 @@ def main(raw_args=None):
             (head in targets and tail in context_adj) or \
             (head in context_adj and tail in targets)
     with open(out_paths.assertions_path, 'w') as w:
-        for edge in filter(valid_edge, edges):
-            print(*edge, sep='\t', file=w)
+        for (field1, rel, head, tail, *rem) in filter(valid_edge, edges):
+            print(field1, rel, f"/c/en/{head}", f"/c/en/{tail}", *rem, sep='\t', file=w)
 
     target_and_context = contexts & targets
     target_or_context = sorted(contexts | targets)
