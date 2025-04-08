@@ -1,6 +1,7 @@
 # STL
 import os
 from typing import List, Dict
+import logging
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
@@ -13,6 +14,7 @@ from .base_module import StanceModule
 from .constants import DEFAULT_MODEL, Stance
 from .encoder import Encoder, collate_ids, keyed_pad, keyed_scalar_stack, encode_text
 from .types import TensorDict
+from .graph import GraphPaths
 
 class KBAttention(torch.nn.Module):
     def __init__(self,
@@ -62,6 +64,7 @@ class ConcatModule(StanceModule):
         super().__init__()
         self.save_hyperparameters()
 
+        graph_paths = GraphPaths(graph_dir)
         triples_factory = TriplesFactory.from_path_binary(graph_dir)
 
         cgcn = CompGCN(
@@ -69,6 +72,17 @@ class ConcatModule(StanceModule):
             triples_factory=triples_factory,
         )
         self.cgcn: SingleCompGCNRepresentation = cgcn.entity_representations[0]
+        if os.path.exists(graph_paths.entity_embeddings_path):
+            combined_cgcn = self.cgcn.combined
+            save_ent_embeddings = torch.load(graph_paths.entity_embeddings_path, weights_only=False)
+            combined_cgcn.entity_representations._embeddings.load_state_dict(save_ent_embeddings.state_dict())
+            if os.path.exists(graph_paths.relation_embeddings_path):
+                rel_ent_embeddings = torch.load(graph_paths.relation_embeddings_path, weights_only=False)
+                combined_cgcn.relation_representations._embeddings.load_state_dict(rel_ent_embeddings.state_dict())
+            else:
+                logging.warning("Loaded entity embeddings from %s but could not find relation embeddings", graph_dir)
+        else:
+                logging.warning("Could not find entity embeddings in %s.", graph_dir)
 
         self.bert = BertModel.from_pretrained(pretrained_model)
         self.context_att = KBAttention(self.bert.config.hidden_size, node_embed_dim)
