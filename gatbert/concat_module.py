@@ -76,8 +76,7 @@ class ConcatModule(StanceModule):
         with open(graph_paths.seeds_path, 'r') as r:
             for (seed, in_target, in_context) in csv.reader(r, delimiter='\t'):
                 if seed not in ent2id:
-                    print(f"Discarding {seed}")
-                    continue
+                    continue # Pykeen discards an entity if there's no edge for it
                 in_target = int(in_target)
                 in_context = int(in_context)
                 (index,) = triples_factory.entities_to_ids([seed])
@@ -90,6 +89,8 @@ class ConcatModule(StanceModule):
 
         self.register_buffer("target_inds", torch.tensor(target_inds_l, dtype=torch.long))
         self.register_buffer("context_inds", torch.tensor(context_inds_l, dtype=torch.long))
+
+        self.bert = BertModel.from_pretrained(pretrained_model)
 
         cgcn = CompGCN(
             embedding_dim=node_embed_dim,
@@ -111,12 +112,12 @@ class ConcatModule(StanceModule):
                 logging.warning("Loaded entity embeddings from %s but could not find relation embeddings", graph_dir)
         else:
                 logging.warning("Could not find entity embeddings in %s.", graph_dir)
-
-        self.bert = BertModel.from_pretrained(pretrained_model)
         self.context_att = KBAttention(self.bert.config.hidden_size, node_embed_dim)
         self.target_att = KBAttention(self.bert.config.hidden_size, node_embed_dim)
-
         self.graph_head = torch.nn.Linear(2 * node_embed_dim,        len(Stance), bias=False)
+
+
+
         self.text_head  = torch.nn.Linear(2 * self.bert.config.hidden_size, len(Stance), bias=False)
         self.__encoder = self.Encoder(BertTokenizerFast.from_pretrained(pretrained_model))
 
