@@ -35,6 +35,8 @@ class GraphPaths:
         self.assertions_path = os.path.join(graph_root, 'assertions.tsv')
         self.seeds_path = os.path.join(graph_root, "seeds.tsv")
 
+        self.checkpoint_dir = os.path.join(graph_root, "checkpoints")
+
         self.entity_embeddings_path = os.path.join(graph_root, 'entities.pkl')
         self.relation_embeddings_path = os.path.join(graph_root, 'relations.pkl')
         self.entities_path = os.path.join(graph_root, "entity_to_id.tsv.gz")

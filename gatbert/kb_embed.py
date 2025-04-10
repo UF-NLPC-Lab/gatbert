@@ -21,11 +21,11 @@ def main(raw_args):
     parser.add_argument("--embed", metavar='TransE',
                         help="Embedding type. Don't specify to just get all the relation triples")
     parser.add_argument("--dim", metavar="64", type=int, default=64, help="Embedding dimensionality")
-    parser.add_argument("--epochs", metavar="5", type=int, default=5, help="Embedding dimensionality")
+    parser.add_argument("--epochs", metavar="5000", type=int, default=5000, help="Embedding dimensionality")
 
     parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping")
-    parser.add_argument("--freq", metavar="10", type=int, default=10, help="Embedding dimensionality")
-    parser.add_argument("--patience", metavar="2", type=int, default=2, help="Embedding dimensionality")
+    parser.add_argument("--freq", metavar="10", type=int, default=10, help="Validation frequency (# epochs)")
+    parser.add_argument("--patience", metavar="2", type=int, default=2, help="# Maximum allowed validation checks without improvement in metrics")
 
     parser.add_argument("--seed", type=int, default=1, metavar="1", help="Random seed for pykeen")
     args = parser.parse_args(raw_args)
@@ -48,7 +48,13 @@ def main(raw_args):
             model=args.embed,
             model_kwargs={"embedding_dim": args.dim},
             random_seed=args.seed,
-            training_kwargs={"num_epochs": args.epochs},
+            training_kwargs={
+                "num_epochs": args.epochs,
+
+                "checkpoint_directory": graph_paths.checkpoint_dir,
+                "checkpoint_frequency": 30,
+                "checkpoint_name": "checkpoint.pt"
+            },
             **kwargs
         )
         model = pipeline_res.model
