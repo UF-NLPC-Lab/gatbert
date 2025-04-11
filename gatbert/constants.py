@@ -59,6 +59,8 @@ Default connection arguments for postgres connections
 
 CN_URI_PATT = re.compile(r'/c/en/([^/]+)')
 
+OPTUNA_STUDY_NAME = "gatbert_transe"
+
 @enum.unique
 class SpecialRelation(enum.Enum):
     TOKEN_TO_TOKEN = -1

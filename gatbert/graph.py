@@ -34,6 +34,7 @@ class GraphPaths:
 
         self.assertions_path = os.path.join(graph_root, 'assertions.tsv')
         self.seeds_path = os.path.join(graph_root, "seeds.tsv")
+        self.optuna_db = os.path.join(graph_root, "optuna_sqlite.db")
 
         self.checkpoint_dir = os.path.join(graph_root, "checkpoints")
 
