@@ -83,7 +83,9 @@ def main(raw_args=None):
         return (head in contexts and tail in target_adj) or \
             (head in target_adj and head in contexts) or \
             (head in targets and tail in context_adj) or \
-            (head in context_adj and tail in targets)
+            (head in context_adj and tail in targets) or \
+            (head in contexts and tail in contexts) or \
+            (head in targets and tail in targets)
     with open(out_paths.assertions_path, 'w') as w:
         for (field1, rel, head, tail, *rem) in filter(valid_edge, edges):
             print(field1, rel, f"/c/en/{head}", f"/c/en/{tail}", *rem, sep='\t', file=w)
