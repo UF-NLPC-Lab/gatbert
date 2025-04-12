@@ -61,6 +61,8 @@ CN_URI_PATT = re.compile(r'/c/en/([^/]+)')
 
 OPTUNA_STUDY_NAME = "gatbert_transe"
 
+PYKEEN_METRIC = "both.realistic.inverse_harmonic_mean_rank"
+
 @enum.unique
 class SpecialRelation(enum.Enum):
     TOKEN_TO_TOKEN = -1

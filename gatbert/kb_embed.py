@@ -9,6 +9,7 @@ from pykeen.pipeline import pipeline
 from pykeen.utils import set_random_seed
 # Local
 from .pykeen_utils import save_all_triples
+from .constants import PYKEEN_METRIC
 from .graph import GraphPaths
 
 
@@ -42,7 +43,11 @@ def main(raw_args):
         kwargs = {}
         if args.early_stopping:
             kwargs['stopper'] = "early"
-            kwargs['stopper_kwargs'] = {"frequency": args.freq, "patience": args.patience}
+            kwargs['stopper_kwargs'] = {
+                "frequency": args.freq,
+                "patience": args.patience,
+                "metric": PYKEEN_METRIC
+            }
         pipeline_res = pipeline(
             dataset=ds,
             model=args.embed,

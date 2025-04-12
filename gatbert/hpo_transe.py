@@ -7,7 +7,7 @@ from pykeen.datasets import ConceptNet
 from pykeen.utils import set_random_seed
 from pykeen.hpo import hpo_pipeline
 # Local
-from .constants import OPTUNA_STUDY_NAME
+from .constants import OPTUNA_STUDY_NAME, PYKEEN_METRIC
 from .graph import GraphPaths
 
 
@@ -36,12 +36,16 @@ def main(raw_args):
         ),
         training_kwargs=dict(
             batch_size=128,
+            num_epochs=100,
         ),
         stopper='early',
         stopper_kwargs=dict(
             frequency=5,
             patience=2,
+            metric=PYKEEN_METRIC,
         ),
+        metric=PYKEEN_METRIC, # Should use the same metric for both early stopping and for optuna
+
         study_name=OPTUNA_STUDY_NAME,
         storage=f"sqlite:///{graph_paths.optuna_db}",
         load_if_exists=True,
