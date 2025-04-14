@@ -135,6 +135,8 @@ class ConcatModule(StanceModule):
         return torch.sum(torch.unsqueeze(mask, -1) * embeddings, dim=-2) / denom
 
     def training_step(self, batch, batch_idx):
+        # Force a new forward pass of the graph
+        self.cgcn.combined.enriched_representations = None
         labels = batch.pop("stance")
         # Calls the forward method defined in subclass
         logits, text_logits, graph_logits = self(**batch)
@@ -153,12 +155,19 @@ class ConcatModule(StanceModule):
         self.log("loss", total_loss)
         return total_loss
 
+    # If we were training right before starting one of these,
+    # we don't want the backward calculations for these reprs
+    # hanging around in memory. So force recomputation once
+    # at the beginning of the epoch
+    def on_validation_epoch_start(self):
+        self.cgcn.combined.enriched_representations = None
+    def on_test_epoch_start(self):
+        self.cgcn.combined.enriched_representations = None
+
     def forward(self,
                 text,
                 target_text_mask,
                 context_text_mask):
-        # Force a new forward pass of the graph
-        self.cgcn.combined.enriched_representations = None
 
         # (1) Encode text
         bert_out = self.bert(**text)
