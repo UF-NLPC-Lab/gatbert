@@ -1,11 +1,9 @@
 # STL
-import sys
 import gc
 import os
 import pathlib
 import argparse
 # 3rd Party
-import torch
 from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForPreTraining, EarlyStoppingCallback
 from transformers import DataCollatorForLanguageModeling
 from datasets import Dataset
@@ -15,34 +13,32 @@ import numpy as np
 # Local
 from .constants import DEFAULT_MODEL
 from .pykeen_utils import save_all_triples
-from .graph import read_adj_mat, get_triples_path, get_entities_path, read_entitites
+from .graph import read_adj_mat, read_entitites, GraphPaths
 from .encoder import pretokenize_cn_uri
-from .utils import time_block
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-cn", metavar="conceptnet-assertions-5.7.0.csv", type=str,
-                        help="Path to conceptnet assertions")
     parser.add_argument("--pretrained", default=DEFAULT_MODEL, metavar=DEFAULT_MODEL, help="Pretrained model to intialize BERT")
     parser.add_argument("-d", type=pathlib.Path, required=True, metavar="output/", help="Output directory containing the CN triples, the HF checkpoint dirs, and the final HF saved model")
     parser.add_argument("--pos", type=str, metavar="N|all", help="How many positive triples to use for NSP. 'all' uses all available. Defaults to min(# of node IDs, # edges)")
     args = parser.parse_args()
 
     os.makedirs(args.d, exist_ok=True)
+    graph_paths = GraphPaths(args.d)
 
-    if args.cn is not None:
-        save_all_triples(ConceptNet(name=args.cn, create_inverse_triples=True), args.d)
+    if not os.path.exists(graph_paths.entities_path) or not os.path.exists(graph_paths.triples_path):
+        save_all_triples(ConceptNet(name=graph_paths.assertions_path, create_inverse_triples=True), args.d)
         # Just to be safe; don't want that memory lingering since we've had memory issues
         # with saving model weights at the end
         gc.collect()
 
     # A bit inefficient to re-read the entities we just wrote to disk,
     # but good enough for now
-    id2uri = {v:k for k,v in read_entitites(get_entities_path(args.d)).items()}
-    adj = read_adj_mat(get_triples_path(args.d))
+    id2uri = {v:k for k,v in read_entitites(graph_paths.entities_path).items()}
+    adj = read_adj_mat(graph_paths.triples_path)
 
     rng = np.random.default_rng(seed=0)
 
