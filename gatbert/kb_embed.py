@@ -1,7 +1,9 @@
 # Local
 import argparse
+import pathlib
 import sys
 import os
+import json
 # 3rd Party
 import torch
 from pykeen.datasets import ConceptNet
@@ -24,7 +26,8 @@ def main(raw_args):
     parser.add_argument("--dim", metavar="64", type=int, default=64, help="Embedding dimensionality")
     parser.add_argument("--epochs", metavar="5000", type=int, default=5000, help="Embedding dimensionality")
 
-    parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping")
+    parser.add_argument("--pipeline", type=pathlib.Path, metavar="pipeline_config.json", help="Pipeline config file from HPO optimization")
+
     parser.add_argument("--freq", metavar="10", type=int, default=10, help="Validation frequency (# epochs)")
     parser.add_argument("--patience", metavar="2", type=int, default=2, help="# Maximum allowed validation checks without improvement in metrics")
 
@@ -41,25 +44,32 @@ def main(raw_args):
     ds = ConceptNet(name=graph_paths.assertions_path, create_inverse_triples=create_inverse_triples)
     if args.embed:
         kwargs = {}
-        if args.early_stopping:
+
+        if args.pipeline:
+            with open(args.pipeline, 'r') as r:
+                pipeline_config = json.load(r)
+            kwargs = pipeline_config['pipeline']
+        else:
+            kwargs = {
+                "model": args.embed,
+                "model_kwargs": {"embedding_dim": args.dim},
+                "training_kwargs": {
+                    "num_epochs": args.epochs,
+                }
+            }
             kwargs['stopper'] = "early"
             kwargs['stopper_kwargs'] = {
                 "frequency": args.freq,
                 "patience": args.patience,
                 "metric": PYKEEN_METRIC
             }
-        pipeline_res = pipeline(
-            dataset=ds,
-            model=args.embed,
-            model_kwargs={"embedding_dim": args.dim},
-            random_seed=args.seed,
-            training_kwargs={
-                "num_epochs": args.epochs,
+        kwargs["training_kwargs"]["checkpoint_directory"] = graph_paths.checkpoint_dir
+        kwargs["training_kwargs"]["checkpoint_frequency"] = 30
+        kwargs["training_kwargs"]["checkpoint_name"] = "checkpoint.pt"
 
-                "checkpoint_directory": graph_paths.checkpoint_dir,
-                "checkpoint_frequency": 30,
-                "checkpoint_name": "checkpoint.pt"
-            },
+        pipeline_res = pipeline(
+            random_seed=args.seed,
+            dataset=ds,
             **kwargs
         )
         model = pipeline_res.model
