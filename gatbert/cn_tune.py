@@ -6,6 +6,7 @@ import argparse
 # 3rd Party
 from transformers import BertTokenizerFast, Trainer, TrainingArguments, BertForPreTraining, EarlyStoppingCallback
 from transformers import DataCollatorForLanguageModeling
+from transformers.trainer_utils import get_last_checkpoint
 from datasets import Dataset
 from tqdm import tqdm
 from pykeen.datasets import ConceptNet
@@ -153,6 +154,13 @@ if __name__ == "__main__":
         load_best_model_at_end=True
     )
 
+
+    checkpoint_path = get_last_checkpoint(args.d)
+    if checkpoint_path:
+        print(f"Loading checkpoint from {checkpoint_path}")
+    else:
+        print(f"No checkpoint found in {args.d}. Starting afresh")
+
     model = BertForPreTraining.from_pretrained(args.pretrained)
     trainer = Trainer(
         model=model,
@@ -162,5 +170,5 @@ if __name__ == "__main__":
         callbacks=[EarlyStoppingCallback(3)],
         data_collator=CustomCollator(tokenizer)
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=checkpoint_path)
     trainer.save_model(args.d)
