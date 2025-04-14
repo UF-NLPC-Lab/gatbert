@@ -5,6 +5,7 @@ import logging
 import csv
 import time
 # 3rd Party
+import pykeen
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
 from pykeen.models.unimodal.compgcn import CompGCN
@@ -99,6 +100,7 @@ class ConcatModule(StanceModule):
                 num_layers=num_graph_layers,
                 layer_kwargs=dict(composition="SubtractionCompositionModule")
             ),
+            random_seed=pykeen.utils.NoRandomSeedNecessary # Random seed already set by lightning
         )
         self.cgcn: SingleCompGCNRepresentation = cgcn.entity_representations[0]
         if os.path.exists(graph_paths.entity_embeddings_path):
