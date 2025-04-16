@@ -5,12 +5,14 @@ import logging
 import csv
 import time
 # 3rd Party
+from tqdm import tqdm
 import pykeen
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
 from pykeen.models.unimodal.compgcn import CompGCN
 from pykeen.nn.representation import SingleCompGCNRepresentation
-from pykeen.triples.triples_factory import TriplesFactory
+from pykeen.triples.triples_factory import TriplesFactory, get_mapped_triples
+import pandas as pd
 # Local
 from .sample import Sample
 from .base_module import StanceModule
@@ -57,7 +59,8 @@ class ConcatModule(StanceModule):
                  joint_loss: bool = False,
                  num_graph_layers: int = 2,
                  node_embed_dim: int = 64,
-
+                 syn_edge_threshold: float = float('inf'),
+                 use_bert_triples: bool = False
                  # seed mask file
                  ):
         """
@@ -70,7 +73,34 @@ class ConcatModule(StanceModule):
 
         graph_paths = GraphPaths(graph_dir)
         triples_factory = TriplesFactory.from_path_binary(graph_dir)
-
+        if use_bert_triples:
+            df = pd.read_csv(graph_paths.bert_triples_path,
+                             usecols=["head", "tail", "relation"],
+                             dtype=int, sep='\t',
+                             compression='gzip')
+            unique_edges = set()
+            for _, row in tqdm(df.iterrows(), total=len(df)):
+                head = row['head']
+                tail = row['tail']
+                if (tail, head) not in unique_edges:
+                    unique_edges.add((head, tail))
+            e2id = dict()
+            for i, (head, tail) in enumerate(tqdm(unique_edges)):
+                e2id[head, tail] = i
+                e2id[tail, head] = i
+            df['edge_id'] = df.apply(lambda row: e2id[row['head'], row['tail']], axis=1)
+            unique_df = df.drop_duplicates(subset='edge_id')
+            rel_mapping = pd.read_csv(graph_paths.relations_path, sep='\t', compression='gzip')
+            relatedto_id = rel_mapping[rel_mapping.label.apply(lambda x: x.lower().replace("/r/", "")) == "relatedto"].iloc[0].id
+            bert_triples = unique_df[["head", "relation", "tail"]].to_numpy()
+            bert_triples[:, 1] = relatedto_id
+            bert_triples = torch.tensor(bert_triples)
+            triples_factory.clone_and_exchange_triples(
+                mapped_triples=torch.concatenate([
+                    bert_triples,
+                    get_mapped_triples(factory=triples_factory)
+                ])
+            )
         target_inds_l = []
         context_inds_l = []
         ent2id = triples_factory.entity_to_id
