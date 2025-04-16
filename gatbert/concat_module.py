@@ -59,7 +59,6 @@ class ConcatModule(StanceModule):
                  joint_loss: bool = False,
                  num_graph_layers: int = 2,
                  node_embed_dim: int = 64,
-                 syn_edge_threshold: float = float('inf'),
                  use_bert_triples: bool = False
                  # seed mask file
                  ):
