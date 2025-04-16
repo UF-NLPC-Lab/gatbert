@@ -11,17 +11,17 @@ from tqdm import tqdm
 # Local
 from .constants import SpecialRelation
 from .utils import batched
-from .graph import get_entity_embeddings_path, get_bert_triples_path
+from .graph import GraphPaths 
 
 def make_edges(graph_root: os.PathLike,
          out_path: Optional[os.PathLike] = None,
          threshold: float = 0.85):
-    graph_root = pathlib.Path(graph_root)
-    if out_path is None:
-        out_path = get_bert_triples_path(graph_root)
-
+    graph_paths = GraphPaths(graph_root)
     assert os.path.exists(graph_root)
-    embedding_mat = torch.load(get_entity_embeddings_path(graph_root), weights_only=False).weight
+    if out_path is None:
+        out_path = graph_paths.bert_triples_path
+
+    embedding_mat = torch.load(graph_paths.entity_embeddings_path, weights_only=False).weight
     with torch.no_grad():
         for i in tqdm(range(embedding_mat.shape[0]), total=embedding_mat.shape[0]):
             embedding_mat[i] /= torch.linalg.vector_norm(embedding_mat[i])
@@ -34,16 +34,16 @@ def make_edges(graph_root: os.PathLike,
 
         for tail_inds in tqdm(batched(range(embedding_mat.shape[0]), batch_size), total=est_batches):
             tail_sim_vals = embedding_mat @ embedding_mat[tail_inds].transpose(1, 0)
-            meet_threshold = torch.where(tail_sim_vals > threshold)
+            meet_threshold = torch.where(tail_sim_vals >= threshold)
             tup_iter = zip(meet_threshold[0].tolist(),
                            (meet_threshold[1] + tail_inds[0]).tolist(),
                            tail_sim_vals[meet_threshold].tolist())
             tup_iter = filter(lambda p: p[0] != p[1], tup_iter) # Ignore self-loops
-            w.write((
-                "\n".join([
+            rows = "\n".join([
                     "\t".join([str(h), rel_id, str(p), f"{sim:.04f}"]) for h,p,sim in tup_iter
-                ]) + '\n'
-            ).encode())
+                ])
+            if rows:
+                b = w.write((rows + "\n").encode())
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser()
