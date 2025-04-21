@@ -21,7 +21,7 @@ for results_dir in sys.argv[1:]:
         for row in reader:
             if row["val_macro_f1"]:
                 val_f1 = max(val_f1, float(row["val_macro_f1"]))
-            elif row["test_macro_f1"]:
+            elif row.get("test_macro_f1"):
                 test_f1 = float(row["test_macro_f1"])
     print(dirname, val_f1, test_f1, sep=',')
 if skipped:
