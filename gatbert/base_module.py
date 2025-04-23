@@ -19,11 +19,12 @@ class StanceModule(L.LightningModule):
         raise NotImplementedError
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=1e-5)
+        return torch.optim.Adam(self.parameters(), lr=4e-5)
     def training_step(self, batch, batch_idx):
         labels = batch.pop("stance")
         # Calls the forward method defined in subclass
-        logits = self(**batch)
+        result = self(**batch)
+        logits = result[0] if isinstance(result, tuple) else result
         loss = self.__ce(logits, labels)
         self.log("loss", loss)
         return loss

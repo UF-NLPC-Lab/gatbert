@@ -48,7 +48,7 @@ MAX_KB_NODES = 128
 Maximum number of subwords to allow from external (not text) data.
 """
 
-DEFAULT_BATCH_SIZE = 4
+DEFAULT_BATCH_SIZE = 64
 
 DEFAULT_MAX_DEGREE = 50
 

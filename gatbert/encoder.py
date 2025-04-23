@@ -35,16 +35,21 @@ def keyed_scalar_stack(samples: List[TensorDict], k: str):
 
 def encode_text(tokenizer: PreTrainedTokenizerFast,
                 sample: Sample | PretokenizedSample,
-                tokenizer_kwargs = dict()) -> TensorDict:
+                max_context_length: int, max_target_length: int) -> TensorDict:
     if isinstance(sample, Sample):
-        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=False, return_tensors='pt', **tokenizer_kwargs)
+        tokenizer_kwargs = {'is_split_into_words': False}
     elif isinstance(sample, GraphSample):
+        tokenizer_kwargs = {'is_split_into_words': True}
         sample = sample.to_sample()
-        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt', **tokenizer_kwargs)
     elif isinstance(sample, PretokenizedSample):
-        return tokenizer(text=sample.target, text_pair=sample.context, is_split_into_words=True, return_tensors='pt', **tokenizer_kwargs)
+        tokenizer_kwargs = {'is_split_into_words': True}
     else:
         raise ValueError(f"Invalid sample type {type(sample)}")
+    context_trunc = tokenizer.decode(tokenizer.encode(sample.context, max_length=max_context_length, add_special_tokens=False))
+    target_trunc = tokenizer.decode(tokenizer.encode(sample.target, max_length=max_target_length, add_special_tokens=False))
+    combined = tokenizer(text=context_trunc, text_pair=target_trunc, return_tensors='pt', return_special_tokens_mask=True, **tokenizer_kwargs)
+    return combined
+
 
 def get_text_masks(special_tokens_mask):
     special_inds = torch.where(special_tokens_mask)[-1]

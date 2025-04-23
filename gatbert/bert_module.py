@@ -1,7 +1,7 @@
 from typing import List
 # 3rd Party
 import torch
-from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast, PreTrainedTokenizerFast, BertModel
+from transformers import BertTokenizerFast, PreTrainedTokenizerFast, BertModel
 # Local
 from .sample import Sample, PretokenizedSample
 from .encoder import encode_text, keyed_scalar_stack, collate_ids, Encoder, get_text_masks, keyed_pad
@@ -25,25 +25,12 @@ class BertModule(StanceModule):
             torch.nn.Tanh(),
             torch.nn.Linear(hidden_size, len(Stance), bias=True)
         )
-
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
-
-        # if not predictor_bias:
-        #     # The bert config doesn't let us enable or disable the bias, so we just set it to 0
-        #     # and never let it get updated during training
-        #     pred_bias = self.bert.classifier.bias
-        #     pred_bias.data[:] = 0.
-        #     pred_bias.requires_grad = False
-
-        self.__encoder = self.Encoder(self.tokenizer)
+        self.__encoder = self.Encoder(self.tokenizer, max_context_length=200, max_target_length=5)
 
     @property
     def encoder(self) -> Encoder:
         return self.__encoder
-
-    # def configure_optimizers(self):
-        # print("Called new config_optimizers")
-        # return torch.optim.Adam(self.parameters(), lr=1e-3)
 
     @staticmethod
     def masked_average(mask, embeddings) -> torch.Tensor:
@@ -61,13 +48,15 @@ class BertModule(StanceModule):
         context_text_vec = self.masked_average(context_text_mask, hidden_states)
         feature_vec = torch.concatenate([target_text_vec, context_text_vec], dim=-1)
         logits = self.ff(feature_vec)
-        return logits
+        return (logits, context_text_vec, target_text_vec)
 
     class Encoder(Encoder):
-        def __init__(self, tokenizer: PreTrainedTokenizerFast):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast, max_context_length: int, max_target_length: int):
             self.__tokenizer = tokenizer
+            self.__max_context_length = max_context_length
+            self.__max_target_length = max_target_length
         def encode(self, sample: Sample | PretokenizedSample):
-            text_encoding = encode_text(self.__tokenizer, sample, tokenizer_kwargs={"return_special_tokens_mask": True})
+            text_encoding = encode_text(self.__tokenizer, sample, self.__max_context_length, self.__max_target_length)
             target_text_mask, context_text_mask = get_text_masks(text_encoding.pop('special_tokens_mask'))
 
             return {
