@@ -16,12 +16,11 @@ class BertModule(StanceModule):
 
         label2id = {s.name:s.value for s in Stance}
         id2label = {v:k for k,v in label2id.items()}
-        hidden_size = 283 # Alloway's hparam
-        # self.config = BertConfig.from_pretrained(pretrained_model, id2label=id2label, label2id=label2id)
         self.bert = BertModel.from_pretrained(pretrained_model)
+        hidden_size = 283 # Alloway's hparam
         self.ff = torch.nn.Sequential(
             torch.nn.Dropout(p=0.20463604390811982),
-            torch.nn.Linear(2 * self.bert.config.hidden_size, hidden_size),
+            torch.nn.Linear(2 * self.bert.config.hidden_size, hidden_size, bias=True),
             torch.nn.Tanh(),
             torch.nn.Linear(hidden_size, len(Stance), bias=True)
         )
