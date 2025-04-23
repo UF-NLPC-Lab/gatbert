@@ -46,6 +46,20 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
     else:
         raise ValueError(f"Invalid sample type {type(sample)}")
 
+def get_text_masks(special_tokens_mask):
+    special_inds = torch.where(special_tokens_mask)[-1]
+    seqlen = special_tokens_mask.shape[-1]
+    cls_ind = special_inds[0]
+    sep_ind = special_inds[1]
+    if len(special_inds) > 2:
+        end_ind = special_inds[2]
+    else:
+        end_ind = seqlen
+    all_inds = torch.arange(0, seqlen)
+    target_text_mask = torch.logical_and(cls_ind < all_inds, all_inds < sep_ind)
+    context_text_mask = torch.logical_and(sep_ind < all_inds, all_inds < end_ind)
+    return target_text_mask, context_text_mask
+
 def collate_ids(tokenizer: PreTrainedTokenizerFast,
                 samples: List[TensorDict],
                 return_attention_mask: bool = False) -> TensorDict:
