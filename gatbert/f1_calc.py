@@ -57,7 +57,7 @@ class F1Calc:
         self.against_precision, self.against_recall, self.against_f1 = \
             F1Calc.compute_metrics(self.__against_stats[0], self.__against_stats[1], self.__against_stats[3])
         self.neutral_precision, self.neutral_recall, self.neutral_f1 = \
-            F1Calc.compute_metrics(self.__neutral_stats[0], self.__against_stats[1], self.__against_stats[3])
+            F1Calc.compute_metrics(self.__neutral_stats[0], self.__neutral_stats[1], self.__neutral_stats[3])
         self.macro_f1 = (self.favor_f1 + self.against_f1 + self.neutral_f1) / 3
         self.__summarized = True
 
