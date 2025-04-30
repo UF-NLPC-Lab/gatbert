@@ -6,7 +6,7 @@ from typing import Generator, Callable
 import torch
 from tokenizers.pre_tokenizers import BertPreTokenizer
 # Local
-from .constants import Stance
+from .constants import Stance, EzstanceDomains
 from .sample import Sample, PretokenizedSample
 from .graph_sample import GraphSample
 
@@ -51,7 +51,7 @@ def parse_graph_tsv(tsv_path) -> Generator[GraphSample, None, None]:
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}
     with open(csv_path, 'r', encoding='latin-1') as r:
-        yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']]), csv.DictReader(r))
+        yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']], domain=EzstanceDomains(row['Domain'])), csv.DictReader(r))
 
 def parse_vast(csv_path) -> Generator[Sample, None, None]:
     strstance2enum = {

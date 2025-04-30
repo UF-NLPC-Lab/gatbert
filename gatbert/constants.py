@@ -1,7 +1,16 @@
 import enum
-import dataclasses
-from typing import Literal
 import re
+
+@enum.unique
+class EzstanceDomains(enum.Enum):
+    COVID = "covid19_domain"
+    WORLD = "world_event_domain"
+    EDU_CUL = "education_and_culture_domain"
+    ENT_CON = "consumption_and_entertainment_domain"
+    SPORTS = "sports_domain"
+    RIGHTS = "rights_domain"
+    ENV = "environmental_protection_domain"
+    POL = "politic"
 
 
 @enum.unique
