@@ -22,7 +22,7 @@ def cli_main(**cli_kwargs):
     )
     early_stopping_callback = EarlyStopping(
         monitor=STOPPING_METRIC,
-        patience=3,
+        patience=10,
         mode='max'
     )
 

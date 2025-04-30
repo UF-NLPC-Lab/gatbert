@@ -34,7 +34,7 @@ class AdvModule(StanceModule):
         self.gamma = gamma
         self.adv_weight = 0
         self.epoch_i = -1
-        self.max_adv_epochs = 20
+        self.max_adv_epochs = 100
         self.__encoder = AdvModule.Encoder(self.bert_mod.encoder)
 
     @property
