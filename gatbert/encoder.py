@@ -85,7 +85,7 @@ def collate_ids(tokenizer: PreTrainedTokenizerFast,
                 return_attention_mask: bool = False) -> TensorDict:
     token_padding = tokenizer.pad_token_id
     rdict = {}
-    rdict['input_ids'] = keyed_pad(samples, 'input_ids')
+    rdict['input_ids'] = keyed_pad(samples, 'input_ids', padding_value=token_padding)
     if return_attention_mask:
         rdict['attention_mask'] = rdict['input_ids'] != token_padding
     if 'position_ids' in samples[0]:
