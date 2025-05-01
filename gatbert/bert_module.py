@@ -1,13 +1,10 @@
-from typing import List
 # 3rd Party
 import torch
-from transformers import BertTokenizerFast, PreTrainedTokenizerFast, BertModel
+from transformers import BertTokenizerFast, BertModel
 # Local
-from .sample import Sample, PretokenizedSample
-from .encoder import encode_text, keyed_scalar_stack, collate_ids, Encoder, get_text_masks, keyed_pad
+from .encoder import SimpleEncoder
 from .constants import DEFAULT_MODEL, Stance
 from .base_module import StanceModule
-from .types import TensorDict
 
 class BertModule(StanceModule):
     def __init__(self,
@@ -24,10 +21,10 @@ class BertModule(StanceModule):
             torch.nn.Linear(hidden_size, len(Stance), bias=True)
         )
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
-        self.__encoder = self.Encoder(self.tokenizer)
+        self.__encoder = SimpleEncoder(self.tokenizer)
 
     @property
-    def encoder(self) -> Encoder:
+    def encoder(self):
         return self.__encoder
 
     @staticmethod
@@ -43,17 +40,4 @@ class BertModule(StanceModule):
         logits = self.classifier(feature_vec)
         return logits
 
-    class Encoder(Encoder):
-        def __init__(self, tokenizer: PreTrainedTokenizerFast):
-            self.__tokenizer = tokenizer
-        def encode(self, sample: Sample | PretokenizedSample):
-            return {
-                **encode_text(self.__tokenizer, sample, 256, 256),
-                'stance': torch.tensor([sample.stance.value])
-            }
-        def collate(self, samples: List[TensorDict]) -> TensorDict:
-            return {
-                **collate_ids(self.__tokenizer, samples, return_attention_mask=True),
-                'stance': keyed_scalar_stack(samples, 'stance')
-            }
 

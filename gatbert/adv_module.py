@@ -6,8 +6,8 @@ import torch
 # Local
 from .data import Sample, PretokenizedSample
 from .types import TensorDict
-from .encoder import Encoder, keyed_scalar_stack
-from .constants import DEFAULT_MODEL, Stance, EzstanceDomains
+from .encoder import keyed_scalar_stack, SimpleEncoder, Encoder
+from .constants import DEFAULT_MODEL, EzstanceDomains
 from .base_module import StanceModule
 from .bert_module import BertModule
 
@@ -74,7 +74,7 @@ class AdvModule(StanceModule):
         return logits, dom_logits
 
     class Encoder(Encoder):
-        def __init__(self, wrapped: BertModule.Encoder):
+        def __init__(self, wrapped: SimpleEncoder):
             self.wrapped = wrapped
             self.domain2id = {dom:i for i,dom in enumerate(EzstanceDomains)}
 

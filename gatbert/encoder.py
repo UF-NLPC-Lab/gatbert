@@ -24,6 +24,21 @@ class Encoder(abc.ABC):
     def collate(self, samples: List[TensorDict]) -> TensorDict:
         pass
 
+class SimpleEncoder(Encoder):
+    def __init__(self, tokenizer: PreTrainedTokenizerFast):
+        self.__tokenizer = tokenizer
+    def encode(self, sample: Sample | PretokenizedSample):
+        return {
+            **encode_text(self.__tokenizer, sample),
+            'stance': torch.tensor([sample.stance.value])
+        }
+    def collate(self, samples: List[TensorDict]) -> TensorDict:
+        return {
+            **collate_ids(self.__tokenizer, samples, return_attention_mask=True),
+            'stance': keyed_scalar_stack(samples, 'stance')
+        }
+
+
 def keyed_pad(samples: List[TensorDict], k: str, padding_value=0):
     return torch.nn.utils.rnn.pad_sequence(
         [torch.squeeze(s[k], dim=0) for s in samples],
@@ -35,7 +50,7 @@ def keyed_scalar_stack(samples: List[TensorDict], k: str):
 
 def encode_text(tokenizer: PreTrainedTokenizerFast,
                 sample: Sample | PretokenizedSample,
-                max_context_length: int, max_target_length: int) -> TensorDict:
+                max_context_length: int = 256, max_target_length: int = 256) -> TensorDict:
     if isinstance(sample, Sample):
         tokenizer_kwargs = {'is_split_into_words': False}
     elif isinstance(sample, GraphSample):
