@@ -11,21 +11,20 @@ from .types import TensorDict
 
 class BertModule(StanceModule):
     def __init__(self,
-                 pretrained_model: str = DEFAULT_MODEL):
+                 pretrained_model: str = DEFAULT_MODEL,
+                 dropout: float = 0.2):
         super().__init__()
-
-        label2id = {s.name:s.value for s in Stance}
-        id2label = {v:k for k,v in label2id.items()}
         self.bert = BertModel.from_pretrained(pretrained_model)
-        hidden_size = 283 # Alloway's hparam
-        self.ff = torch.nn.Sequential(
-            torch.nn.Dropout(p=0.20463604390811982),
-            torch.nn.Linear(2 * self.bert.config.hidden_size, hidden_size, bias=True),
-            torch.nn.Tanh(),
+        self.bert.pooler = None
+        hidden_size = self.bert.config.hidden_size
+        self.classifier = torch.nn.Sequential(
+            torch.nn.Dropout(dropout),
+            torch.nn.Linear(hidden_size, hidden_size, bias=True),
+            torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, len(Stance), bias=True)
         )
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
-        self.__encoder = self.Encoder(self.tokenizer, max_context_length=200, max_target_length=5)
+        self.__encoder = self.Encoder(self.tokenizer)
 
     @property
     def encoder(self) -> Encoder:
@@ -38,37 +37,23 @@ class BertModule(StanceModule):
         return torch.sum(torch.unsqueeze(mask, -1) * embeddings, dim=-2) / denom
 
     def forward(self, **kwargs):
-        target_text_mask = kwargs.pop('target_text_mask')
-        context_text_mask = kwargs.pop('context_text_mask')
         # (1) Encode text
         bert_out = self.bert(**kwargs)
-        hidden_states = bert_out.last_hidden_state
-        target_text_vec = self.masked_average(target_text_mask, hidden_states)
-        context_text_vec = self.masked_average(context_text_mask, hidden_states)
-        feature_vec = torch.concatenate([target_text_vec, context_text_vec], dim=-1)
-        logits = self.ff(feature_vec)
-        return (logits, context_text_vec, target_text_vec)
+        feature_vec = bert_out.last_hidden_state[:, 0]
+        logits = self.classifier(feature_vec)
+        return logits
 
     class Encoder(Encoder):
-        def __init__(self, tokenizer: PreTrainedTokenizerFast, max_context_length: int, max_target_length: int):
+        def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.__tokenizer = tokenizer
-            self.__max_context_length = max_context_length
-            self.__max_target_length = max_target_length
         def encode(self, sample: Sample | PretokenizedSample):
-            text_encoding = encode_text(self.__tokenizer, sample, self.__max_context_length, self.__max_target_length)
-            target_text_mask, context_text_mask = get_text_masks(text_encoding.pop('special_tokens_mask'))
-
             return {
-                **text_encoding,
-                "target_text_mask": target_text_mask,
-                "context_text_mask": context_text_mask,
+                **encode_text(self.__tokenizer, sample, 256, 256),
                 'stance': torch.tensor([sample.stance.value])
             }
         def collate(self, samples: List[TensorDict]) -> TensorDict:
             return {
                 **collate_ids(self.__tokenizer, samples, return_attention_mask=True),
-                'target_text_mask': keyed_pad(samples, 'target_text_mask'),
-                'context_text_mask': keyed_pad(samples, 'context_text_mask'),
                 'stance': keyed_scalar_stack(samples, 'stance')
             }
 

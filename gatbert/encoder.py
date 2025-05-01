@@ -45,9 +45,9 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
         tokenizer_kwargs = {'is_split_into_words': True}
     else:
         raise ValueError(f"Invalid sample type {type(sample)}")
-    context_trunc = tokenizer.decode(tokenizer.encode(sample.context, max_length=max_context_length, add_special_tokens=True), skip_special_tokens=True)
-    target_trunc = tokenizer.decode(tokenizer.encode(sample.target, max_length=max_target_length, add_special_tokens=True), skip_special_tokens=True)
-    combined = tokenizer(text=context_trunc, text_pair=target_trunc, return_tensors='pt', return_special_tokens_mask=True, **tokenizer_kwargs)
+    context_trunc = tokenizer.decode(tokenizer.encode(sample.context, max_length=max_context_length, add_special_tokens=False), **tokenizer_kwargs)
+    target_trunc = tokenizer.decode(tokenizer.encode(sample.target, max_length=max_target_length, add_special_tokens=False), **tokenizer_kwargs)
+    combined = tokenizer(text=context_trunc, text_pair=target_trunc, return_tensors='pt', return_special_tokens_mask=True)
     return combined
 
 
