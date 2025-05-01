@@ -50,7 +50,7 @@ def keyed_scalar_stack(samples: List[TensorDict], k: str):
 
 def encode_text(tokenizer: PreTrainedTokenizerFast,
                 sample: Sample | PretokenizedSample,
-                max_context_length: int = 256, max_target_length: int = 256) -> TensorDict:
+                max_context_length: int = 256, max_target_length: int = 64) -> TensorDict:
     if isinstance(sample, Sample):
         tokenizer_kwargs = {'is_split_into_words': False}
     elif isinstance(sample, GraphSample):
