@@ -9,7 +9,7 @@ from .base_module import StanceModule
 class BertModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
-                 dropout: float = 0.2):
+                 dropout: float = 0.0):
         super().__init__()
         self.bert = BertModel.from_pretrained(pretrained_model)
         self.bert.pooler = None
@@ -26,6 +26,9 @@ class BertModule(StanceModule):
     @property
     def encoder(self):
         return self.__encoder
+    @property
+    def feature_size(self) -> int:
+        return self.bert.config.hidden_size
 
     @staticmethod
     def masked_average(mask, embeddings) -> torch.Tensor:
@@ -38,6 +41,6 @@ class BertModule(StanceModule):
         bert_out = self.bert(**kwargs)
         feature_vec = bert_out.last_hidden_state[:, 0]
         logits = self.classifier(feature_vec)
-        return logits
+        return logits, feature_vec
 
 

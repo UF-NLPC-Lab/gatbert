@@ -18,8 +18,16 @@ class StanceModule(L.LightningModule):
     def encoder(self) -> Encoder:
         raise NotImplementedError
 
+    @property
+    @abc.abstractmethod
+    def feature_size(self) -> int:
+        raise NotImplementedError
+
+    def get_optimizer_params(self):
+        return [{"params": self.parameters(), "lr": 4e-5}]
+
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=4e-5)
+        return torch.optim.Adam(self.get_optimizer_params())
     def training_step(self, batch, batch_idx):
         labels = batch.pop("stance")
         # Calls the forward method defined in subclass

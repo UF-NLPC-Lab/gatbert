@@ -18,28 +18,29 @@ class BartEncModule(StanceModule):
         self.bart: BartEncoder = BartModel.from_pretrained(pretrained_model).encoder
         self.bart.pooler = None
 
-        hidden_size = self.bart.config.hidden_size
         self.classifier = torch.nn.Sequential(
             torch.nn.Dropout(dropout),
-            torch.nn.Linear(hidden_size, hidden_size, bias=True),
+            torch.nn.Linear(self.feature_size, self.feature_size, bias=True),
             torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, len(Stance), bias=True)
+            torch.nn.Linear(self.feature_size, len(Stance), bias=True)
         )
         self.__encoder = SimpleEncoder(BartTokenizerFast.from_pretrained(pretrained_model))
 
-    def configure_optimizers(self):
-        # Values drawn from the EZ-stance paper
-        grouped_params = [
-            {"params": list(self.bart.parameters()), "lr": 2e-5},
-            {"params": list(self.classifier.parameters()), "lr": 1e-3}
+    @property
+    def feature_size(self) -> int:
+        return self.bart.config.hidden_size
+
+    def get_optimizer_params(self):
+        return [
+            {"params": self.bart.parameters(), "lr": 2e-5},
+            {"params": self.classifier.parameters(), "lr": 1e-3}
         ]
-        return torch.optim.Adam(grouped_params)
     
     def forward(self, **kwargs):
         bart_out = self.bart(**kwargs)
         feature_vec = bart_out.last_hidden_state[:, 0]
         logits = self.classifier(feature_vec)
-        return logits
+        return logits, feature_vec
 
     @property
     def encoder(self):

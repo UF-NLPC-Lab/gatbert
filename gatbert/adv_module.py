@@ -6,26 +6,27 @@ import torch
 # Local
 from .data import Sample, PretokenizedSample
 from .types import TensorDict
-from .encoder import keyed_scalar_stack, SimpleEncoder, Encoder
-from .constants import DEFAULT_MODEL, EzstanceDomains
+from .encoder import keyed_scalar_stack, Encoder
+from .constants import EzstanceDomains
 from .base_module import StanceModule
-from .bert_module import BertModule
 
 class AdvModule(StanceModule):
 
     def __init__(self,
-                 pretrained_model: str = DEFAULT_MODEL,
+                 held_out: EzstanceDomains,
+                 wrapped: StanceModule,
+                 dropout: float = 0.0,
                  gamma: float = 10):
         super().__init__()
 
-        self.bert_mod = BertModule(pretrained_model)
-        self.hidden_size = 128
+        self.held_out = held_out
+        self.wrapped = wrapped
 
         self.domain_head = torch.nn.Sequential(
-            torch.nn.Dropout(p=0.20),
-            torch.nn.Linear(2 * self.bert_mod.bert.config.hidden_size, self.hidden_size, bias=True),
+            torch.nn.Dropout(p=dropout),
+            torch.nn.Linear(self.feature_size, self.feature_size, bias=True),
             torch.nn.Tanh(),
-            torch.nn.Linear(self.hidden_size, len(EzstanceDomains), bias=True)
+            torch.nn.Linear(self.feature_size, len(EzstanceDomains) - 1, bias=True)
         )
 
         self.stance_loss = torch.nn.CrossEntropyLoss()
@@ -35,11 +36,25 @@ class AdvModule(StanceModule):
         self.adv_weight = 0
         self.epoch_i = -1
         self.max_adv_epochs = 100
-        self.__encoder = AdvModule.Encoder(self.bert_mod.encoder)
+        self.__encoder = AdvModule.Encoder(held_out=self.held_out,
+                                           domains=EzstanceDomains,
+                                           wrapped=self.wrapped.encoder)
 
     @property
     def encoder(self):
         return self.__encoder
+
+    @property
+    def feature_size(self):
+        return self.wrapped.feature_size
+
+    def get_optimizer_params(self):
+        """
+        This class is the entire motivation for this get_optimizer_params method
+        Want the wrapped module to be able to set its own learning rates
+        """
+        wrapped_params = self.wrapped.get_optimizer_params()
+        return wrapped_params + [{"params": self.domain_head.parameters(), "lr": 1e-3}]
 
     def on_train_epoch_start(self):
         self.epoch_i += 1
@@ -50,7 +65,7 @@ class AdvModule(StanceModule):
     def training_step(self, batch, batch_idx):
         labels = batch.pop('stance')
         domains = batch.pop('domain')
-        (stance_logits, dom_logits) = self(**batch)
+        (stance_logits, _, dom_logits) = self(**batch)
 
         stance_loss_val = self.stance_loss(stance_logits, labels)
         dom_loss_val = self.dom_loss(dom_logits, domains)
@@ -68,15 +83,23 @@ class AdvModule(StanceModule):
         return super().test_step(batch, batch_idx)
 
     def forward(self, **kwargs):
-        (logits, context_vec, target_vec) = self.bert_mod(**kwargs)
-        feature_vec = torch.concatenate([context_vec, target_vec], dim=-1)
+        (logits, feature_vec) = self.wrapped(**kwargs)[:2]
         dom_logits = self.domain_head(feature_vec)
-        return logits, dom_logits
+        return logits, feature_vec, dom_logits
 
     class Encoder(Encoder):
-        def __init__(self, wrapped: SimpleEncoder):
+        def __init__(self,
+                     held_out,
+                     domains,
+                     wrapped: Encoder):
             self.wrapped = wrapped
-            self.domain2id = {dom:i for i,dom in enumerate(EzstanceDomains)}
+
+            self.domain2id = {}
+            i = -1
+            for dom in domains:
+                if dom != held_out:
+                    self.domain2id[dom] = (i := i + 1)
+            self.domain2id[held_out] = i + 1
 
         def encode(self, sample: Sample | PretokenizedSample):
             encoding = self.wrapped.encode(sample)
