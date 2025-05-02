@@ -69,6 +69,7 @@ class ConcatModule(StanceModule):
             config: config for the graph portion of the model
         """
         super().__init__()
+        raise ValueError("Currently deprecated")
         self.save_hyperparameters()
 
         graph_paths = GraphPaths(graph_dir)

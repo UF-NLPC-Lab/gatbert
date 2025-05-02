@@ -21,6 +21,7 @@ class HybridModule(StanceModule):
                 pretrained_model: str = DEFAULT_MODEL,
                 ):
         super().__init__()
+        raise ValueError("Currently deprecated")
 
         self.config = GatbertConfig(
             BertConfig.from_pretrained(pretrained_model),
