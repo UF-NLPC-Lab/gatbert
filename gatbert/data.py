@@ -50,8 +50,9 @@ def parse_graph_tsv(tsv_path) -> Generator[GraphSample, None, None]:
 
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}
+    get_domain = lambda row: EzstanceDomains(row['Domain']) if 'Domain' in row else None
     with open(csv_path, 'r', encoding='latin-1') as r:
-        yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']], domain=EzstanceDomains(row['Domain'])), csv.DictReader(r))
+        yield from map(lambda row: Sample(row['Text'], row['Target 1'], strstance2[row['Stance 1']], domain=get_domain(row)), csv.DictReader(r))
 
 def parse_vast(csv_path) -> Generator[Sample, None, None]:
     strstance2enum = {

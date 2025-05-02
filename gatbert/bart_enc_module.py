@@ -13,7 +13,7 @@ class BartEncModule(StanceModule):
 
     def __init__(self,
                  pretrained_model: str = 'facebook/bart-large-mnli',
-                 dropout: float = 0.2):
+                 dropout: float = 0.0):
         super().__init__()
         self.bart: BartEncoder = BartModel.from_pretrained(pretrained_model).encoder
         self.bart.pooler = None
