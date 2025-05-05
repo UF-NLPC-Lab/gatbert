@@ -1,5 +1,6 @@
 # STL
-from typing import List
+import dataclasses
+from typing import List, Optional
 import math
 # 3rd Party
 import torch
@@ -9,13 +10,19 @@ from .types import TensorDict
 from .encoder import keyed_scalar_stack, Encoder
 from .constants import EzstanceDomains
 from .base_module import StanceModule
+from .output import StanceOutput
+
+@dataclasses.dataclass
+class AdvOutput(StanceOutput):
+    dom_logits: Optional[torch.FloatTensor] = None
+
 
 class AdvModule(StanceModule):
 
     def __init__(self,
                  held_out: EzstanceDomains,
                  wrapped: StanceModule,
-                 dropout: float = 0.0,
+                 dropout: float = 0.2,
                  gamma: float = 10):
         super().__init__()
 
@@ -63,12 +70,11 @@ class AdvModule(StanceModule):
         )
 
     def training_step(self, batch, batch_idx):
-        labels = batch.pop('stance')
         domains = batch.pop('domain')
-        (stance_logits, _, dom_logits) = self(**batch)
+        adv_output = self(**batch)
 
-        stance_loss_val = self.stance_loss(stance_logits, labels)
-        dom_loss_val = self.dom_loss(dom_logits, domains)
+        stance_loss_val = adv_output.loss
+        dom_loss_val = self.dom_loss(adv_output.dom_logits, domains)
         loss = stance_loss_val - self.adv_weight * dom_loss_val
         self.log('loss', loss)
         self.log('loss/domain', dom_loss_val)
@@ -83,9 +89,13 @@ class AdvModule(StanceModule):
         return super().test_step(batch, batch_idx)
 
     def forward(self, **kwargs):
-        (logits, feature_vec) = self.wrapped(**kwargs)[:2]
-        dom_logits = self.domain_head(feature_vec)
-        return logits, feature_vec, dom_logits
+        base_output = self.wrapped(**kwargs)
+        adv_output = AdvOutput()
+        dom_logits = self.domain_head(base_output.seq_encoding)
+        for k,v in base_output.items():
+            adv_output[k] = v
+        adv_output.dom_logits = dom_logits
+        return adv_output
 
     class Encoder(Encoder):
         def __init__(self,
