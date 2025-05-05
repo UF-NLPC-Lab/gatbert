@@ -28,6 +28,14 @@ class Stance(enum.Enum):
     AGAINST = 1
     FAVOR = 2
 
+    @staticmethod
+    def id2label():
+        return {s.value:s.name for s in Stance}
+
+    @staticmethod
+    def label2id():
+        return {v:k for k,v in Stance.id2label().items()}
+ 
 @enum.unique
 class NodeType(enum.Enum):
     TOKEN = 0

@@ -27,15 +27,15 @@ class SimpleEncoder(Encoder):
     def __init__(self, tokenizer: PreTrainedTokenizerFast):
         self.__tokenizer = tokenizer
     def encode(self, sample: Sample | PretokenizedSample):
-        return {
-            **encode_text(self.__tokenizer, sample),
-            'stance': torch.tensor([sample.stance.value])
-        }
+        rdict = encode_text(self.__tokenizer, sample)
+        if sample.stance is not None:
+            rdict['labels'] = torch.tensor([sample.stance.value])
+        return rdict
     def collate(self, samples: List[TensorDict]) -> TensorDict:
-        return {
-            **collate_ids(self.__tokenizer, samples, return_attention_mask=True),
-            'stance': keyed_scalar_stack(samples, 'stance')
-        }
+        rdict= collate_ids(self.__tokenizer, samples, return_attention_mask=True)
+        if 'labels' in samples[0]:
+            rdict['labels'] = keyed_scalar_stack(samples, 'labels')
+        return rdict
 
 
 def keyed_pad(samples: List[TensorDict], k: str, padding_value=0):

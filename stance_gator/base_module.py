@@ -2,15 +2,15 @@ import abc
 # 3rd Party
 import torch
 import lightning as L
+import typing
 # Local
 from .f1_calc import F1Calc
 from .encoder import Encoder
+from .output import StanceOutput
 
 class StanceModule(L.LightningModule):
     def __init__(self):
         super().__init__()
-
-        self.__ce = torch.nn.CrossEntropyLoss()
         self.__calc = F1Calc()
 
     @property
@@ -29,11 +29,9 @@ class StanceModule(L.LightningModule):
     def configure_optimizers(self):
         return torch.optim.Adam(self.get_optimizer_params())
     def training_step(self, batch, batch_idx):
-        labels = batch.pop("stance")
         # Calls the forward method defined in subclass
         result = self(**batch)
-        logits = result[0] if isinstance(result, tuple) else result
-        loss = self.__ce(logits, labels)
+        loss = typing.cast(StanceOutput, result).loss
         self.log("loss", loss)
         return loss
     def validation_step(self, batch, batch_idx):
@@ -47,9 +45,9 @@ class StanceModule(L.LightningModule):
 
 
     def __eval_step(self, batch, batch_idx):
-        labels = batch.pop('stance').view(-1)
+        labels = batch.pop('labels').view(-1)
         rval = self(**batch)
-        logits = rval[0] if isinstance(rval, tuple) else rval
+        logits = typing.cast(StanceOutput, rval).logits
         probs = torch.nn.functional.softmax(logits, dim=-1)
         self.__calc.record(probs, labels)
     def __eval_finish(self, stage):

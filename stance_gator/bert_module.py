@@ -1,7 +1,11 @@
+# STL
+from typing import Optional
 # 3rd Party
 import torch
-from transformers import BertTokenizerFast, BertModel
+from transformers import BertTokenizerFast, BertPreTrainedModel, BertModel
+from transformers.models.bert.configuration_bert import BertConfig
 # Local
+from .bert_for_stance import BertForStance, BertForStanceConfig
 from .encoder import SimpleEncoder
 from .constants import DEFAULT_MODEL, Stance
 from .base_module import StanceModule
@@ -9,38 +13,24 @@ from .base_module import StanceModule
 class BertModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
-                 dropout: float = 0.0):
+                 classifier_hidden_units: Optional[int] = None
+                 ):
         super().__init__()
-        self.bert = BertModel.from_pretrained(pretrained_model)
-        self.bert.pooler = None
-        hidden_size = self.bert.config.hidden_size
-        self.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(dropout),
-            torch.nn.Linear(hidden_size, hidden_size, bias=True),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, len(Stance), bias=True)
-        )
+        config = BertForStanceConfig.from_pretrained(pretrained_model,
+                                                     classifier_hidden_units=classifier_hidden_units,
+                                                     id2label=Stance.id2label(),
+                                                     label2id=Stance.label2id(),
+                                                     )
+        self.wrapped = BertForStance.from_pretrained(pretrained_model, config=config)
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
         self.__encoder = SimpleEncoder(self.tokenizer)
-
     @property
     def encoder(self):
         return self.__encoder
     @property
     def feature_size(self) -> int:
-        return self.bert.config.hidden_size
-
-    @staticmethod
-    def masked_average(mask, embeddings) -> torch.Tensor:
-        # Need the epsilon to prevent divide-by-zero errors
-        denom = torch.sum(mask, dim=-1, keepdim=True) + 1e-6
-        return torch.sum(torch.unsqueeze(mask, -1) * embeddings, dim=-2) / denom
-
+        return self.wrapped.config.hidden_size
     def forward(self, **kwargs):
-        # (1) Encode text
-        bert_out = self.bert(**kwargs)
-        feature_vec = bert_out.last_hidden_state[:, 0]
-        logits = self.classifier(feature_vec)
-        return logits, feature_vec
-
+        return self.wrapped(**kwargs)
+        
 
