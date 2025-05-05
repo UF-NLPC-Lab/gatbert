@@ -5,9 +5,8 @@ from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, Tuple, Optional, List
-from .data import MapDataset, parse_ez_stance, parse_graph_tsv, parse_semeval, parse_vast
+from .data import MapDataset, parse_ez_stance, parse_semeval, parse_vast
 from .constants import DEFAULT_BATCH_SIZE
-from .hybrid_module import *
 from .types import CorpusType, Transform
 from .utils import map_func_gen
 
@@ -20,9 +19,7 @@ class StanceDataModule(L.LightningDataModule):
         super().__init__()
         self.save_hyperparameters()
 
-        if corpus_type == 'graph':
-            parse_fn = parse_graph_tsv
-        elif corpus_type == 'ezstance':
+        if corpus_type == 'ezstance':
             parse_fn = parse_ez_stance
         elif corpus_type == 'semeval':
             parse_fn = parse_semeval
@@ -32,7 +29,6 @@ class StanceDataModule(L.LightningDataModule):
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         if transforms:
             transform_map = {
-                'rm_external': lambda s: s.strip_external() if isinstance(s, GraphSample) else s
             }
             for t in transforms:
                 if t in transform_map:

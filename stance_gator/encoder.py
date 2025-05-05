@@ -8,7 +8,6 @@ from transformers import PreTrainedTokenizerFast, BertTokenizerFast
 # Local
 from .types import TensorDict
 from .sample import Sample, PretokenizedSample
-from .graph_sample import GraphSample
 
 PoolIndices = Dict[int, List[int]]
 
@@ -53,9 +52,6 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
                 max_context_length: int = 256, max_target_length: int = 64) -> TensorDict:
     if isinstance(sample, Sample):
         tokenizer_kwargs = {'is_split_into_words': False}
-    elif isinstance(sample, GraphSample):
-        tokenizer_kwargs = {'is_split_into_words': True}
-        sample = sample.to_sample()
     elif isinstance(sample, PretokenizedSample):
         tokenizer_kwargs = {'is_split_into_words': True}
     else:

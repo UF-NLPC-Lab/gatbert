@@ -8,7 +8,6 @@ from tokenizers.pre_tokenizers import BertPreTokenizer
 # Local
 from .constants import Stance, EzstanceDomains
 from .sample import Sample, PretokenizedSample
-from .graph_sample import GraphSample
 
 
 class MapDataset(torch.utils.data.Dataset):
@@ -43,10 +42,6 @@ def get_default_pretokenize() -> Callable[[Sample], PretokenizedSample]:
             stance=sample.stance
         )
     return f
-
-def parse_graph_tsv(tsv_path) -> Generator[GraphSample, None, None]:
-    with open(tsv_path, 'r') as r:
-        yield from map(GraphSample.from_row, csv.reader(r, delimiter='\t'))
 
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}
