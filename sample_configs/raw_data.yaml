@@ -1,7 +1,0 @@
-class_path: gatbert.data_modules.RandomSplitDataModule
-init_args:
-  partitions:
-    /path/to/ezstance/subtaskA/noun_phrase/raw_train_all_onecol.csv: [0.7, 0.3, 0.0]
-    /path/to/ezstance/subtaskA/noun_phrase/raw_val_all_onecol.csv: [0.0, 0.0, 1.0]
-  corpus_type: ezstance
-  batch_size: 4

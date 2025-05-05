@@ -1,7 +1,0 @@
-class_path: gatbert.data_modules.RandomSplitDataModule
-init_args:
-  partitions:
-    /path/to/graph/data/train_graph.tsv: [0.7, 0.3, 0.0]
-    /path/to/graph/data/val_graph.tsv: [0.0, 0.0, 1.0]
-  corpus_type: graph
-  batch_size: 4
