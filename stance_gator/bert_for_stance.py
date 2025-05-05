@@ -35,7 +35,7 @@ class BertForStanceConfig(BertConfig):
         super().__init__(**base_kwargs)
         self.problem_type = "single_label_classification"
         self.add_pooling_layer = False
-        self.return_dict = False
+        self.return_dict = True
         self.classifier_hidden_units = classifier_hidden_units if classifier_hidden_units else self.hidden_size
 
 class BertForStance(BertPreTrainedModel):
