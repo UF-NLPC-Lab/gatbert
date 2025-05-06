@@ -1,11 +1,9 @@
 # STL
 from typing import Optional
 # 3rd Party
-import torch
-from transformers import BertTokenizerFast, BertPreTrainedModel, BertModel
-from transformers.models.bert.configuration_bert import BertConfig
+from transformers import BertTokenizerFast
 # Local
-from .bert_for_stance import BertForStance, BertForStanceConfig
+from .models import BertForStance, BertForStanceConfig
 from .encoder import SimpleEncoder
 from .constants import DEFAULT_MODEL, Stance
 from .base_module import StanceModule

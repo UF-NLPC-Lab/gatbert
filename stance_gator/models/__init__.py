@@ -1,0 +1,1 @@
+from .bert_model.bert_for_stance import BertForStance, BertForStanceConfig
