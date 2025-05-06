@@ -1,1 +1,1 @@
-from .bert_model.bert_for_stance import BertForStance, BertForStanceConfig
+from .bert_model.modeling_bert_for_stance import BertForStance, BertForStanceConfig
