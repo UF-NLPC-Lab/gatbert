@@ -1,14 +1,12 @@
 # STL
 from typing import Optional
 # 3rd Party
-import torch
 from transformers import BartTokenizerFast
-from transformers.models.bart.modeling_bart import BartEncoder, BartModel
 # Local
 from .encoder import SimpleEncoder
 from .base_module import StanceModule
 from .constants import Stance
-from .bartenc_for_stance import BartEncForStance, BartEncForStanceConfig
+from .models import BartEncForStance, BartEncForStanceConfig
 
 class BartEncModule(StanceModule):
 
@@ -23,7 +21,8 @@ class BartEncModule(StanceModule):
             label2id=Stance.label2id(),
         )
         self.wrapped = BartEncForStance.from_pretrained(pretrained_model, config=config)
-        self.__encoder = SimpleEncoder(BartTokenizerFast.from_pretrained(pretrained_model))
+        self.tokenizer = BartTokenizerFast.from_pretrained(pretrained_model)
+        self.__encoder = SimpleEncoder(self.tokenizer)
 
     @property
     def feature_size(self) -> int:

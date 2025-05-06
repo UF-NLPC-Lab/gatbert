@@ -1,28 +1,17 @@
 import math
 from typing import Optional
+import dataclasses
 # 3rd Party
 import torch
 from transformers import BartTokenizerFast
-from transformers.models.bart.modeling_bart import BartEncoder, BartPreTrainedModel, BartModel, BartScaledWordEmbedding
-from transformers.models.bart.configuration_bart import BartConfig
+from transformers.models.bart.modeling_bart import BartEncoder, BartPreTrainedModel, BartScaledWordEmbedding
+from transformers.utils.generic import ModelOutput
 # Local
-from .encoder import SimpleEncoder
-from .base_module import StanceModule
-from .constants import Stance
-from .output import StanceOutput
+from .configuration_bartenc_for_stance import BartEncForStanceConfig
 
-class BartEncForStanceConfig(BartConfig):
-    def __init__(self,
-                 *,
-                 classifier_hidden_units: Optional[int] = None,
-                 **base_kwargs):
-        super().__init__(**base_kwargs)
-        self.problem_type = "single_label_classification"
-        self.add_pooling_layer = False
-        self.return_dict = False
-        self.classifier_hidden_units = classifier_hidden_units if classifier_hidden_units else self.hidden_size
 
 class BartEncForStance(BartPreTrainedModel):
+    config_class = BartEncForStanceConfig
     _tied_weights_keys = ["encoder.embed_tokens.weight"]
 
     def __init__(self, config: BartEncForStanceConfig):
@@ -39,7 +28,7 @@ class BartEncForStance(BartPreTrainedModel):
             torch.nn.Dropout(config.classifier_dropout if config.classifier_dropout is not None else config.activation_dropout),
             torch.nn.Linear(hidden_size, hidden_size, bias=True),
             torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, len(Stance), bias=True)
+            torch.nn.Linear(hidden_size, self.num_labels, bias=True)
         )
         self.loss_fct = torch.nn.CrossEntropyLoss()
         self.post_init()
@@ -47,6 +36,12 @@ class BartEncForStance(BartPreTrainedModel):
     def _tie_weights(self):
         # FIXME: Address other niche cases liek "facebook/bart-large-cnn" like HF library did, if necessary
         self._tie_or_clone_weights(self.encoder.embed_tokens, self.shared)
+
+    @dataclasses.dataclass
+    class Output(ModelOutput):
+        loss: Optional[torch.FloatTensor] = None
+        logits: Optional[torch.FloatTensor] = None
+        seq_encoding: Optional[torch.FloatTensor] = None
 
     def forward(self,
             input_ids: Optional[torch.LongTensor] = None,
@@ -69,4 +64,6 @@ class BartEncForStance(BartPreTrainedModel):
         loss = None
         if labels is not None:
            loss = self.loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-        return StanceOutput(loss=loss, logits=logits, seq_encoding=feature_vec)
+        return BartEncForStance.Output(loss=loss, logits=logits, seq_encoding=feature_vec)
+
+BartEncForStance.register_for_auto_class("AutoModel")
