@@ -12,3 +12,5 @@ class BertForStanceConfig(BertConfig):
         self.add_pooling_layer = False
         self.return_dict = True
         self.classifier_hidden_units = classifier_hidden_units if classifier_hidden_units else self.hidden_size
+
+BertForStanceConfig.register_for_auto_class("AutoConfig")

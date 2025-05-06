@@ -66,3 +66,5 @@ class BertForStance(BertPreTrainedModel):
         if labels is not None:
            loss = self.loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
         return BertForStance.Output(loss=loss, logits=logits, seq_encoding=feature_vec)
+
+BertForStance.register_for_auto_class("AutoModel")

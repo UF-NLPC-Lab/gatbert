@@ -10,3 +10,7 @@ dependencies:
     - --extra-index-url https://download.pytorch.org/whl/cu118
     - -e ./
     - build
+
+    - huggingface_hub[cli]
+    - ipykernel
+    - ipywidgets
