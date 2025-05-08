@@ -39,7 +39,7 @@ def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
                       row['Target 1'],
                       strstance2[row['Stance 1']],
                       is_split_into_words=False,
-                      domain=EzstanceDomains(row['Domain']) if 'Domain' in row else None)
+                      domain=row['Domain'] if 'Domain' in row else None)
     with open(csv_path, 'r', encoding='latin-1') as r:
         yield from map(f, csv.DictReader(r))
 

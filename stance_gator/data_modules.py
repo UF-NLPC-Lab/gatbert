@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 # Local
 from typing import Dict, Tuple, Optional, List
+from .encoder import Encoder
 from .data import MapDataset, parse_ez_stance, parse_semeval, parse_vast
 from .constants import DEFAULT_BATCH_SIZE
 from .types import CorpusType, Transform

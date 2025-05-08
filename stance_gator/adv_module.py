@@ -37,13 +37,13 @@ class AdvModule(StanceModule):
         dom_logits: Optional[torch.FloatTensor] = None
 
     def __init__(self,
-                 held_out: EzstanceDomains,
+                 held_out: str,
                  pretrained_model: str = 'facebook/bart-large-mnli',
                  recon_weight: float = 0.0,
                  reg_weight: float = 0.0,
                  adv_weight: float = 0.0):
         super().__init__()
-        self.held_out = held_out
+        domains = [dom.value for dom in EzstanceDomains] # TODO: let user specify what domains they're testing over
 
         bart_model = BartModel.from_pretrained(pretrained_model)
         tokenizer = BartTokenizerFast.from_pretrained(pretrained_model)
@@ -66,7 +66,7 @@ class AdvModule(StanceModule):
             torch.nn.Dropout(predictor_dropout),
             torch.nn.Linear(hidden_size, hidden_size, bias=True),
             torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, len(EzstanceDomains) - 1, bias=True)
+            torch.nn.Linear(hidden_size, len(domains) - 1, bias=True)
         )
 
         self.recon_act = torch.nn.ReLU()
@@ -77,8 +77,8 @@ class AdvModule(StanceModule):
         self.recon_weight = recon_weight
         self.reg_weight = reg_weight
         self.adv_weight = adv_weight
-        self.__encoder = AdvModule.Encoder(held_out=self.held_out,
-                                           domains=EzstanceDomains,
+        self.__encoder = AdvModule.Encoder(held_out=held_out,
+                                           domains=domains,
                                            tokenizer=tokenizer)
         self.register_buffer("identity_trans", torch.eye(hidden_size), persistent=False)
 
@@ -110,7 +110,8 @@ class AdvModule(StanceModule):
 
         stance_loss_val = self.stance_loss(adv_output.logits, labels)
         adv_loss_val = self.adv_loss(adv_output.dom_logits, domains)
-        reg_loss_val = torch.linalg.norm(self.trans_layer.weight - self.identity_trans)**2
+        trans_w = self.trans_layer.weight 
+        reg_loss_val = torch.linalg.norm(trans_w - self.identity_trans)**2
 
         act_static_embeds = self.recon_act(inputs_embeds)
         act_context_embeds = self.recon_act(adv_output.last_hidden_state)

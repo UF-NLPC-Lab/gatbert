@@ -8,4 +8,6 @@ dependencies = [
     "transformers",
     "lightning",
     "jsonargparse[signatures]",
+    "optuna",
+    "optuna-integration[pytorch_lightning]"
 ]
