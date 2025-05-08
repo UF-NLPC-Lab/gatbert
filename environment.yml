@@ -8,9 +8,11 @@ dependencies:
 
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu118
+    - --config-settings editable-mode=strict
     - -e ./
     - build
 
+    - optuna
     - huggingface_hub[cli]
     - ipykernel
     - ipywidgets

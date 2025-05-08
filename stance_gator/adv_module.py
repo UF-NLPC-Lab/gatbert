@@ -7,13 +7,11 @@ import torch
 from transformers import BartTokenizerFast, BartModel
 from transformers.utils.generic import ModelOutput
 # Local
-from .data import Sample, PretokenizedSample
+from .data import Sample
 from .types import TensorDict
 from .encoder import keyed_scalar_stack, keyed_pad, Encoder, get_text_masks, SimpleEncoder
 from .constants import EzstanceDomains, Stance
 from .base_module import StanceModule
-from .modules import BartEncModule
-from .output import StanceOutput
 
 
 class ReconLoss(torch.nn.Module):
@@ -167,7 +165,7 @@ class AdvModule(StanceModule):
                     self.domain2id[dom] = (i := i + 1)
             self.domain2id[held_out] = i + 1
 
-        def encode(self, sample: Sample | PretokenizedSample):
+        def encode(self, sample: Sample):
             encoding = self.wrapped.encode(sample)
             encoding['context_mask'], encoding['target_mask'] = get_text_masks(encoding['special_tokens_mask'])
             encoding['domain'] = torch.tensor(self.domain2id[sample.domain])

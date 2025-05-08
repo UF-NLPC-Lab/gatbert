@@ -1,13 +1,13 @@
 # STL
-from typing import List, Tuple, Dict, Iterable
+from typing import List, Dict, Iterable
 import abc
 import logging
 # 3rd party
 import torch
-from transformers import PreTrainedTokenizerFast, BertTokenizerFast
+from transformers import PreTrainedTokenizerFast
 # Local
 from .types import TensorDict
-from .sample import Sample, PretokenizedSample
+from .sample import Sample
 
 PoolIndices = Dict[int, List[int]]
 
@@ -26,7 +26,7 @@ class Encoder(abc.ABC):
 class SimpleEncoder(Encoder):
     def __init__(self, tokenizer: PreTrainedTokenizerFast):
         self.__tokenizer = tokenizer
-    def encode(self, sample: Sample | PretokenizedSample):
+    def encode(self, sample: Sample):
         rdict = encode_text(self.__tokenizer, sample)
         if sample.stance is not None:
             rdict['labels'] = torch.tensor([sample.stance.value])
@@ -48,14 +48,9 @@ def keyed_scalar_stack(samples: List[TensorDict], k: str):
     return torch.stack([torch.squeeze(s[k]) for s in samples])
 
 def encode_text(tokenizer: PreTrainedTokenizerFast,
-                sample: Sample | PretokenizedSample,
+                sample: Sample,
                 max_context_length: int = 256, max_target_length: int = 64) -> TensorDict:
-    if isinstance(sample, Sample):
-        tokenizer_kwargs = {'is_split_into_words': False}
-    elif isinstance(sample, PretokenizedSample):
-        tokenizer_kwargs = {'is_split_into_words': True}
-    else:
-        raise ValueError(f"Invalid sample type {type(sample)}")
+    tokenizer_kwargs = {'is_split_into_words': sample.is_split_into_words}
     context_trunc = tokenizer.decode(tokenizer.encode(sample.context, max_length=max_context_length, add_special_tokens=False), **tokenizer_kwargs)
     target_trunc = tokenizer.decode(tokenizer.encode(sample.target, max_length=max_target_length, add_special_tokens=False), **tokenizer_kwargs)
     combined = tokenizer(text=context_trunc, text_pair=target_trunc, return_tensors='pt', return_special_tokens_mask=True)
@@ -105,8 +100,3 @@ def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:
         s[0, :] = i
         batched.append(s)
     return torch.concatenate(batched, dim=-1)
-
-def pretokenize_cn_uri(uri: str) -> List[str]:
-    if uri.startswith('/'):
-        return uri.split('/')[3].split('_')
-    return uri.split()

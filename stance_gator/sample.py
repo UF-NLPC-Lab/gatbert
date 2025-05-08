@@ -1,18 +1,12 @@
 import dataclasses
-from typing import List, Optional
+from typing import List, Any, Optional
 # Local
-from .constants import Stance, EzstanceDomains
+from .constants import Stance
 
 @dataclasses.dataclass
 class Sample:
-    context: str
-    target: str
+    context: str | List[str]
+    target: str | List[str]
     stance: Stance
-    domain: Optional[EzstanceDomains] = None
-
-@dataclasses.dataclass
-class PretokenizedSample:
-    context: List[str]
-    target: List[str]
-    stance: Stance
-    domain: Optional[EzstanceDomains] = None
+    is_split_into_words: bool
+    domain: Optional[Any] = None
