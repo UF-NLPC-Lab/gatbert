@@ -22,3 +22,5 @@ lightning_logs/
 # Training artifacts
 trainer_output/
 lightning_logs/
+
+*.egg-info
