@@ -18,11 +18,6 @@ class StanceModule(L.LightningModule):
     def encoder(self) -> Encoder:
         raise NotImplementedError
 
-    @property
-    @abc.abstractmethod
-    def feature_size(self) -> int:
-        raise NotImplementedError
-
     def get_optimizer_params(self):
         return [{"params": self.parameters(), "lr": 4e-5}]
 

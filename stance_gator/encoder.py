@@ -65,16 +65,24 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
 def get_text_masks(special_tokens_mask):
     special_inds = torch.where(special_tokens_mask)[-1]
     seqlen = special_tokens_mask.shape[-1]
-    cls_ind = special_inds[0]
-    sep_ind = special_inds[1]
-    if len(special_inds) > 2:
-        end_ind = special_inds[2]
-    else:
-        end_ind = seqlen
     all_inds = torch.arange(0, seqlen)
-    target_text_mask = torch.logical_and(cls_ind < all_inds, all_inds < sep_ind)
-    context_text_mask = torch.logical_and(sep_ind < all_inds, all_inds < end_ind)
-    return target_text_mask, context_text_mask
+    ind_a = special_inds[0]
+    ind_b = special_inds[1]
+    if len(special_inds) > 3:
+        # Handles BART--does <s>...</s></s>...</s> for a total of 4 special tokens
+        ind_c = special_inds[-2]
+        ind_d = special_inds[-1]
+    elif len(special_inds) == 3:
+        # Handles BERT-- [CLS]...[SEP]...[SEP]
+        ind_c = ind_b
+        ind_d = special_inds[-1]
+    else:
+        # Don't know what tokenizers would only give two special tokens
+        ind_c = ind_b
+        ind_d = seqlen
+    context_text_mask = torch.logical_and(ind_a < all_inds, all_inds < ind_b)
+    target_text_mask = torch.logical_and(ind_c < all_inds, all_inds < ind_d)
+    return context_text_mask, target_text_mask
 
 def collate_ids(tokenizer: PreTrainedTokenizerFast,
                 samples: List[TensorDict],
