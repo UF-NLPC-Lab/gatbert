@@ -55,7 +55,7 @@ def main(raw_args=None):
     best_score = -1
     best_config = {}
     os.makedirs(args.out, exist_ok=True)
-    for hparam_dict in grid_iter(adv_weight=[0.25, 0.75], recon_weight=[1e-1, 1], reg_weight=[1e-1, 1, 1e1]):
+    for hparam_dict in grid_iter(adv_weight=[0.25, 0.75], recon_weight=[1e-1, 1, 1e1], reg_weight=[1e-1, 1, 1e1]):
         print(f"Testing config {hparam_dict}")
         seed_everything(0)
 
