@@ -87,7 +87,6 @@ def main(raw_args=None):
             print("New best!")
             best_score = macro_f1
             best_config = hparam_dict
-        break
     print(f"Best config: {best_config}")
     with open(os.path.join(logger.root_dir, 'best.json'), 'w') as w:
         out_json = {'config': best_config, 'test_macro_f1': best_score}
