@@ -39,6 +39,7 @@ def main(raw_args=None):
     np_rng = np.random.default_rng(seed=0)
     np_rng.shuffle(rem_domains)
     val_domain = np_rng.choice(rem_domains)
+    print(f"Chose {val_domain} as the validation set")
     data_dir = os.path.join(args.data, args.heldout)
     train_iter = parse_ez_stance(os.path.join(data_dir, "raw_train_all_onecol.csv"))
     val_iter = parse_ez_stance(os.path.join(data_dir, "raw_val_all_onecol.csv"))
@@ -70,9 +71,8 @@ def main(raw_args=None):
                            name=f"heldout_{heldout}",
                            version=version)
         trainer = L.Trainer(
-                            # max_epochs=1,
-                            max_steps=4,
-                            log_every_n_steps=1,
+                            max_epochs=4,
+                            log_every_n_steps=10,
                             enable_checkpointing=False,
                             logger=logger
                             )
