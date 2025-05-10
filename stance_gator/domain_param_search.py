@@ -55,14 +55,15 @@ def main(raw_args=None):
     best_score = -1
     best_config = {}
     os.makedirs(args.out, exist_ok=True)
+    BASE_CONFIG = {'adv_weight': 0, 'recon_weight': 0, 'reg_weight': 0}
     combos = list(grid_iter(adv_weight=[0.25, 0.75], recon_weight=[1e-1, 1, 1e1], reg_weight=[1e-1, 1, 1e1]))
-    combos.insert(0, {'adv_weight': 0, 'recon_weight': 0, 'reg_weight': 0})
+    combos.append(BASE_CONFIG)
     for hparam_dict in combos:
         print(f"Testing config {hparam_dict}")
         seed_everything(0)
 
         # FIXME: Really inefficient to re-encode these samples each time
-        module = AdvModule(held_out=heldout)#, **hparam_dict)
+        module = AdvModule(held_out=val_domain, domains=rem_domains, **hparam_dict)
         encode = module.encoder.encode
         collate = module.encoder.collate
         train_loader = DataLoader(MapDataset(map(encode, train_samples)), batch_size=DEFAULT_BATCH_SIZE, collate_fn=collate)
@@ -83,7 +84,7 @@ def main(raw_args=None):
         with open(os.path.join(logger.log_dir, 'hparams.json'), 'w') as w:
             w.write(json.dumps(hparam_dict))
         macro_f1 = test_scores['test_macro_f1']
-        if macro_f1 > best_score:
+        if hparam_dict is not BASE_CONFIG and macro_f1 > best_score:
             print("New best!")
             best_score = macro_f1
             best_config = hparam_dict

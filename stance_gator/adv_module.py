@@ -39,11 +39,13 @@ class AdvModule(StanceModule):
     def __init__(self,
                  held_out: str,
                  pretrained_model: str = 'facebook/bart-large-mnli',
+                 domains = None,
                  recon_weight: float = 0.0,
                  reg_weight: float = 0.0,
                  adv_weight: float = 0.0):
         super().__init__()
-        domains = [dom.value for dom in EzstanceDomains] # TODO: let user specify what domains they're testing over
+        if not domains:
+            domains = [dom.value for dom in EzstanceDomains] # TODO: let user specify what domains they're testing over
 
         bart_model = BartModel.from_pretrained(pretrained_model)
         tokenizer = BartTokenizerFast.from_pretrained(pretrained_model)
