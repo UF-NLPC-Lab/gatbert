@@ -39,6 +39,7 @@ def main(raw_args=None):
     np_rng = np.random.default_rng(seed=0)
     np_rng.shuffle(rem_domains)
     val_domain = np_rng.choice(rem_domains)
+    print(f"Shuffled domains: {rem_domains}")
     print(f"Chose {val_domain} as the validation set")
     data_dir = os.path.join(args.data, args.heldout)
     train_iter = parse_ez_stance(os.path.join(data_dir, "raw_train_all_onecol.csv"))
@@ -55,8 +56,8 @@ def main(raw_args=None):
     best_score = -1
     best_config = {}
     os.makedirs(args.out, exist_ok=True)
-    BASE_CONFIG = {'adv_weight': 0, 'recon_weight': 0, 'reg_weight': 0}
-    combos = list(grid_iter(adv_weight=[0.25, 0.75], recon_weight=[1e-1, 1, 1e1], reg_weight=[1e-1, 1, 1e1]))
+    BASE_CONFIG = {'adv_weight': 0}
+    combos = list(grid_iter(adv_weight=[0.1, 0.25, 0.5, 0.75, 0.9]))
     combos.append(BASE_CONFIG)
     for hparam_dict in combos:
         print(f"Testing config {hparam_dict}")
