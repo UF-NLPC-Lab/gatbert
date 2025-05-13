@@ -41,7 +41,8 @@ class AdvModule(StanceModule):
                  held_out: str,
                  pretrained_model: str = 'facebook/bart-large-mnli',
                  domains = None,
-                 adv_weight: float = 0.0):
+                 adv_weight: float = 0.0,
+                 use_grl: bool = True):
         super().__init__()
         if not domains:
             domains = [dom.value for dom in EzstanceDomains] # TODO: let user specify what domains they're testing over
@@ -55,7 +56,7 @@ class AdvModule(StanceModule):
 
         # The transformation which we regularize
         # self.trans_layer = torch.nn.Linear(hidden_size, hidden_size, bias=False)
-        self.grl = GRL()
+        self.grl = GRL() if use_grl else torch.nn.Identity()
 
         predictor_dropout = config.classifier_dropout if config.classifier_dropout is not None else config.activation_dropout
         self.classifier = torch.nn.Sequential(
