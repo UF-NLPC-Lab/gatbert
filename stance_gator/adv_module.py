@@ -29,7 +29,7 @@ class ReconLoss(torch.nn.Module):
 
 class AdvModule(StanceModule):
 
-    training_only = ["domain", "context_mask", "target_mask"]
+    training_only = ["domain"]
 
     @dataclasses.dataclass
     class Output(ModelOutput):
