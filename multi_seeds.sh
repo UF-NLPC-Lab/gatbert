@@ -3,7 +3,7 @@
 config=$1
 outdir=$2
 name=$3
-n_seeds=${4:-10}
+n_seeds=${4:-3}
 
 if [ ! -f $config ]
 then
@@ -20,7 +20,7 @@ fi
 
 for i in $(seq 1 $n_seeds)
 do
-    python -m gatbert.fit_and_test \
+    python -m stance_gator.fit_and_test \
         -c $config \
         --seed_everything $i \
         --trainer.logger.init_args.save_dir $outdir \
