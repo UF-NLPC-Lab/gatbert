@@ -22,7 +22,7 @@ def cli_main(**cli_kwargs):
     )
     early_stopping_callback = EarlyStopping(
         monitor=STOPPING_METRIC,
-        patience=10,
+        patience=3,
         mode='max'
     )
 
@@ -34,7 +34,8 @@ def cli_main(**cli_kwargs):
             "callbacks": [
                 model_callback,
                 early_stopping_callback
-            ]
+            ],
+            "deterministic": True
         },
         **cli_kwargs
     )
