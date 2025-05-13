@@ -9,6 +9,7 @@ import numpy as np
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import CSVLogger
 from torch.utils.data import DataLoader
+import torch
 # Local
 from .data import parse_ez_stance, MapDataset
 from .constants import EzstanceDomains, DEFAULT_BATCH_SIZE
@@ -67,7 +68,11 @@ def main(raw_args=None):
         module = AdvModule(held_out=val_domain, domains=rem_domains, **hparam_dict)
         encode = module.encoder.encode
         collate = module.encoder.collate
-        train_loader = DataLoader(MapDataset(map(encode, train_samples)), batch_size=DEFAULT_BATCH_SIZE, collate_fn=collate)
+        train_loader = DataLoader(MapDataset(map(encode, train_samples)),
+                                  batch_size=DEFAULT_BATCH_SIZE,
+                                  collate_fn=collate,
+                                  shuffle=True
+                                  )
         val_loader = DataLoader(MapDataset(map(encode, val_samples)), batch_size=DEFAULT_BATCH_SIZE, collate_fn=collate)
 
         version = "_".join([f"{name}_{val}" for name,val in hparam_dict.items()])
@@ -78,7 +83,8 @@ def main(raw_args=None):
                             max_epochs=4,
                             log_every_n_steps=10,
                             enable_checkpointing=False,
-                            logger=logger
+                            logger=logger,
+                            deterministic=True
                             )
         trainer.fit(model=module, train_dataloaders=train_loader)
         [test_scores] = trainer.test(model=module, dataloaders=val_loader)
