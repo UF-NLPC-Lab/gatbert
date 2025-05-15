@@ -4,6 +4,7 @@ import csv
 from typing import Generator
 # 3rd Party
 import torch
+import spacy
 # Local
 from .constants import Stance, EzstanceDomains
 from .sample import Sample
@@ -55,3 +56,15 @@ def parse_vast(csv_path) -> Generator[Sample, None, None]:
 
 def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
     raise NotImplementedError
+
+CORPUS_PARSERS = {
+    "ezstance": parse_ez_stance,
+    "vast": parse_vast,
+}
+
+__spacy_pipeline = None
+def get_en_pipeline():
+    global __spacy_pipeline
+    if __spacy_pipeline is None:
+        __spacy_pipeline = spacy.load('en_core_web_sm')
+    return __spacy_pipeline
