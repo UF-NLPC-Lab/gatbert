@@ -25,3 +25,5 @@ lightning_logs/
 
 *.egg-info
 temp/
+*.ckpt
+*.csv
