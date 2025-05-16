@@ -2,11 +2,12 @@ import pathlib
 # 3rd Party
 import numpy as np
 import torch
-from torch.utils.data import random_split
 import torch_geometric
 from torch_geometric.nn import RGCNConv
-from torch_geometric.data import Data
+import torch_geometric.data
+import torch_geometric.loader
 import lightning as L
+from lightning.fabric.utilities.seed import seed_everything
 from lightning.pytorch.loggers import CSVLogger
 # Local
 from .cn import CN
@@ -30,20 +31,20 @@ class RGCN(torch.nn.Module):
         self.relation_embed = torch.nn.Embedding(n_relations, dim)
         self.loss_fn = torch.nn.BCEWithLogitsLoss()
 
-    def forward(self, entity, edge_index, edge_type, triplets=None, labels=None):
-        node_state = self.entity_embed(entity)
+    def forward(self, x, edge_index, edge_type, triples=None, y=None):
+        node_state = self.entity_embed(x)
         node_state = self.conv1(node_state, edge_index, edge_type)
         node_state = self.relu(node_state)
         node_state = self.dropout(node_state)
         node_state = self.conv2(node_state, edge_index, edge_type)
 
         loss = None
-        if triplets is not None and labels is not None:
-            head_state = node_state[triplets[:, 0]]
-            rel_embedding = self.relation_embed(triplets[:, 1])
-            tail_state = node_state[triplets[:, 2]]
+        if triples is not None and y is not None:
+            head_state = node_state[triples[0]]
+            rel_embedding = self.relation_embed(triples[1])
+            tail_state = node_state[triples[2]]
             logits = torch.sum(head_state * rel_embedding * tail_state, dim=-1)
-            loss = self.loss_fn(logits, labels)
+            loss = self.loss_fn(logits, y)
         return node_state, loss
 
 class CNTrainModule(L.LightningModule):
@@ -53,6 +54,7 @@ class CNTrainModule(L.LightningModule):
                  pos_triples: int = 50000,
                  neg_ratio: int = 1,
                  message_ratio: float = 0.5):
+        super().__init__()
         self.cn = CN(assertions_path)
         self.rgcn = RGCN(len(self.cn.node2id), len(self.cn.relation2id), dim=dim)
         self.cn_edges = np.array(self.cn.edges)
@@ -60,9 +62,24 @@ class CNTrainModule(L.LightningModule):
         self.neg_ratio = neg_ratio
         self.message_ratio = message_ratio
 
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-2)
+
+    def training_step(self, batch: torch_geometric.data.Data, batch_idx):
+        _, loss = self.rgcn(
+            x=batch.x,
+            edge_index=batch.edge_index,
+            edge_type=batch.edge_attr,
+            triples=batch.triples,
+            y=batch.y
+        )
+        self.log('loss', loss)
+        return loss
+
     def train_dataloader(self):
         shuffled_edges = np.random.permutation(self.cn_edges)
 
+        samples = []
         for raw_batch in batched(shuffled_edges, self.pos_triples):
             raw_batch = np.stack(raw_batch, axis=-1)
             head, rel, tail = raw_batch
@@ -72,30 +89,30 @@ class CNTrainModule(L.LightningModule):
 
             n_message_edges = int(self.message_ratio * new_edges.shape[-1])
             split_ids = np.random.choice(np.arange(new_edges.shape[1]), size=n_message_edges, replace=False)
-            message_edges = new_edges[split_ids]
+            message_edges = new_edges[:, split_ids]
             edge_index = np.stack([message_edges[0], message_edges[2]], axis=0)
             edge_attr = message_edges[1]
 
             # Make triples to be scored
-            neg_samples = np.tile(new_edges, (self.neg_ratio, 1))
-            alterations = np.random.choice(unique_nodes.shape[0], size=neg_samples.shape[0])
-            alter_head = np.random.uniform(size=neg_samples.shape[0]) > 0.5
-            neg_samples[alter_head, 0] = alterations[alter_head]
-            neg_samples[~alter_head, 2] = alterations[~alter_head]
-            triples = np.concatenate([new_edges, neg_samples], axis=0)
-            y = np.concatenate([np.ones(new_edges.shape[0]), np.zeros(neg_samples.shape[0])])
+            neg_samples = np.tile(new_edges, (1, self.neg_ratio))
+            alterations = np.random.choice(unique_nodes.shape[0], size=neg_samples.shape[1])
+            alter_head = np.random.uniform(size=neg_samples.shape[1]) > 0.5
+            neg_samples[0, alter_head] = alterations[alter_head]
+            neg_samples[2, ~alter_head] = alterations[~alter_head]
+            triples = np.concatenate([new_edges, neg_samples], axis=1)
+            y = np.concatenate([np.ones(new_edges.shape[1]), np.zeros(neg_samples.shape[1])])
 
-            d = Data(x=torch.tensor(unique_nodes),
+            d = torch_geometric.data.Data(x=torch.tensor(unique_nodes),
                      edge_index=torch.tensor(edge_index),
                      edge_attr=torch.tensor(edge_attr),
                      y=torch.tensor(y))
             # Non-standard attributes
             d.triples = torch.tensor(triples)
-            pass
-
-        return super().train_dataloader()
+            samples.append(d)
+        return torch_geometric.loader.DataLoader(samples)
 
 if __name__ == "__main__":
+    seed_everything(0)
     assertions_path = "./temp/filter_graph.tsv"
     out_dir = "graph_logs/"
     mod = CNTrainModule(assertions_path)

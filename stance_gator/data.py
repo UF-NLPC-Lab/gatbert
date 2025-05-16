@@ -69,6 +69,11 @@ def get_en_pipeline():
         __spacy_pipeline = spacy.load('en_core_web_sm')
     return __spacy_pipeline
 
+def extract_cn_baseword(uri: str):
+    if uri.startswith('/'):
+        return uri.split('/')[3]
+    return "_".join(uri.split())
+
 def pretokenize_cn_uri(uri: str):
     if uri.startswith('/'):
         return uri.split('/')[3].split('_')
