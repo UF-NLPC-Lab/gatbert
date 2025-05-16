@@ -2,18 +2,13 @@ import csv
 # 3rd Party
 from tqdm import tqdm
 # Local
-from .data import CORPUS_PARSERS, parse_vast, get_en_pipeline
+from .data import CORPUS_PARSERS, parse_vast, get_en_pipeline, pretokenize_cn_uri
 from .utils import Dictionary
-
-def pretokenize_cn_uri(uri: str):
-    if uri.startswith('/'):
-        return uri.split('/')[3].split('_')
-    return uri.split()
 
 def main():
 
     parser = parse_vast
-    csv_path = "/home/ethanlmines/blue_dir/datasets/VAST/vast_dev.csv"
+    csv_path = "/home/ethanlmines/blue_dir/datasets/VAST/vast_train.csv"
     cn_path  = "/home/ethanlmines/blue_dir/datasets/conceptnet/luo/assertions.tsv"
     out_path = "./temp/filter_graph.tsv"
 

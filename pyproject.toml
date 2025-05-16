@@ -9,6 +9,13 @@ dependencies = [
     "lightning",
     "jsonargparse[signatures]",
 
+    "torch_geometric",
+    "pyg_lib",
+    "torch_scatter",
+    "torch_sparse",
+
     "spacy>=3.8.0,<3.9.0",
     "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 ]
+[tool.setuptools.packages.find]
+include =["stance_gator*"]
