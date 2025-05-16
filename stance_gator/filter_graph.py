@@ -19,20 +19,18 @@ def main():
     tags = {"NOUN", "PNOUN", "ADJ", "ADV"}
 
     d = Dictionary()
-    for sample in tqdm(samples):
+    for sample in tqdm(samples, desc="Extracting seeds"):
         d.update([t.lemma_ for t in pipeline(sample.context) if t.pos_ in tags])
     top_lemmas = d.filter_extremes(no_below=2, no_above=0.5, keep_tokens=5000)
 
     filtered_rows = []
     with open(cn_path, 'r') as r:
         rows = list(csv.reader(r, delimiter='\t'))
-    for row in tqdm(rows):
+    for row in tqdm(rows, desc="Filtering edges..."):
         head = pretokenize_cn_uri(row[2])
         tail = pretokenize_cn_uri(row[3])
         if (len(head) == 1 and head[0] in top_lemmas) or (len(tail) == 1 and tail[0] in top_lemmas):
             filtered_rows.append(row)
-            if len(filtered_rows) >= 100:
-                break
     with open(out_path, 'w') as w:
         writer = csv.writer(w, delimiter='\t')
         writer.writerows(filtered_rows)
