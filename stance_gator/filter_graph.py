@@ -2,7 +2,7 @@ import csv
 # 3rd Party
 from tqdm import tqdm
 # Local
-from .data import CORPUS_PARSERS, parse_vast, get_en_pipeline, pretokenize_cn_uri
+from .data import CORPUS_PARSERS, parse_vast, get_en_pipeline, pretokenize_cn_uri, extract_lemmas
 from .utils import Dictionary
 
 def main():
@@ -16,11 +16,9 @@ def main():
     samples = list(parser(csv_path))
     pipeline = get_en_pipeline()
 
-    tags = {"NOUN", "PNOUN", "ADJ", "ADV"}
-
     d = Dictionary()
     for sample in tqdm(samples, desc="Extracting seeds"):
-        d.update([t.lemma_ for t in pipeline(sample.context) if t.pos_ in tags])
+        d.update(extract_lemmas(pipeline, sample.context))
     top_lemmas = d.filter_extremes(no_below=2, no_above=0.5, keep_tokens=5000)
 
     filtered_rows = []

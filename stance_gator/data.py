@@ -60,6 +60,7 @@ def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
 CORPUS_PARSERS = {
     "ezstance": parse_ez_stance,
     "vast": parse_vast,
+    "semeval": parse_semeval
 }
 
 __spacy_pipeline = None
@@ -78,3 +79,10 @@ def pretokenize_cn_uri(uri: str):
     if uri.startswith('/'):
         return uri.split('/')[3].split('_')
     return uri.split()
+
+# This function is called a lot. More efficient probably to not re-make the set every time
+__tags = {"NOUN", "PNOUN", "ADJ", "ADV"}
+def extract_lemmas(pipeline, sentence: str):
+    global __tags
+    return [t.lemma_ for t in pipeline(sentence) if t.pos_ in __tags]
+    
