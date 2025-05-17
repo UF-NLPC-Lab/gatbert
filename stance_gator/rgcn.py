@@ -1,4 +1,6 @@
+import os
 import pathlib
+from typing import Iterable
 # 3rd Party
 import numpy as np
 import torch
@@ -10,6 +12,8 @@ import lightning as L
 from lightning.fabric.utilities.seed import seed_everything
 from lightning.pytorch.loggers import CSVLogger
 # Local
+from .types import CorpusType
+from .sample import Sample
 from .cn import CN
 from .utils import batched
 
@@ -87,18 +91,14 @@ class CNTrainModule(L.LightningModule):
         rev = np.stack([edges[2], edges[1] + n_rels, edges[0]])
         return np.concatenate([edges, rev], axis=1)
 
-    def train_dataloader(self):
-        shuffled_edges = np.random.permutation(self.cn_edges)
+    def __make_sample(self, raw_batch: np.ndarray, with_triples=False) -> torch_geometric.data.Data:
+        head, rel, tail = raw_batch
+        unique_nodes, head_tail_inds = np.unique((head, tail), return_inverse=True)
 
-        samples = []
-        for raw_batch in batched(shuffled_edges, self.pos_triples):
-            raw_batch = np.stack(raw_batch, axis=-1)
-            head, rel, tail = raw_batch
-            unique_nodes, head_tail_inds = np.unique((head, tail), return_inverse=True)
+        relabeled_edges = np.stack([head_tail_inds[0], rel, head_tail_inds[1]], axis=0)
 
-            relabeled_edges = np.stack([head_tail_inds[0], rel, head_tail_inds[1]], axis=0)
-
-            # Make triples to be scored
+        # Make triples to be scored
+        if with_triples:
             neg_samples = np.tile(relabeled_edges, (1, self.neg_ratio))
             alterations = np.random.choice(unique_nodes.shape[0], size=neg_samples.shape[1])
             alter_head = np.random.uniform(size=neg_samples.shape[1]) > 0.5
@@ -106,25 +106,40 @@ class CNTrainModule(L.LightningModule):
             neg_samples[2, ~alter_head] = alterations[~alter_head]
             triples = np.concatenate([relabeled_edges, neg_samples], axis=1)
             y = np.concatenate([np.ones(relabeled_edges.shape[1]), np.zeros(neg_samples.shape[1])])
+            triples = torch.tensor(triples)
+            y = torch.tensor(y)
+        else:
+            triples = None
+            y = None
 
-            n_message_edges = int(self.message_ratio * relabeled_edges.shape[-1])
-            split_ids = np.random.choice(np.arange(relabeled_edges.shape[1]), size=n_message_edges, replace=False)
-            message_edges = relabeled_edges[:, split_ids]
-            # Only do reversal on edges used for message passing
-            message_edges = CNTrainModule.add_reverse_edges(message_edges, len(self.cn.relation2id))
-            edge_index = np.stack([message_edges[0], message_edges[2]], axis=0)
-            edge_attr = message_edges[1]
+        n_message_edges = int(self.message_ratio * relabeled_edges.shape[-1])
+        split_ids = np.random.choice(np.arange(relabeled_edges.shape[1]), size=n_message_edges, replace=False)
+        message_edges = relabeled_edges[:, split_ids]
+        # Only do reversal on edges used for message passing
+        message_edges = CNTrainModule.add_reverse_edges(message_edges, len(self.cn.relation2id))
+        edge_index = np.stack([message_edges[0], message_edges[2]], axis=0)
+        edge_attr = message_edges[1]
+        # Don't need to add self-loops; RGCNConv class already does that by default
 
-            # FIXME: Need to add self-loops to each node?
+        d = torch_geometric.data.Data(x=torch.tensor(unique_nodes),
+                 edge_index=torch.tensor(edge_index),
+                 edge_attr=torch.tensor(edge_attr),
+                 y=y)
+        # Non-standard attributes
+        d.triples = triples
+        return d
 
-            d = torch_geometric.data.Data(x=torch.tensor(unique_nodes),
-                     edge_index=torch.tensor(edge_index),
-                     edge_attr=torch.tensor(edge_attr),
-                     y=torch.tensor(y))
-            # Non-standard attributes
-            d.triples = torch.tensor(triples)
-            samples.append(d)
+    def train_dataloader(self):
+        shuffled_edges = np.random.permutation(self.cn_edges)
+        samples = []
+        for raw_batch in batched(shuffled_edges, self.pos_triples):
+            raw_batch = np.stack(raw_batch, axis=-1)
+            samples.append(self.__make_sample(raw_batch, with_triples=True))
         return torch_geometric.loader.DataLoader(samples)
+
+    def make_predict_dataloader(self, samples: Iterable[Sample]):
+        graph_samples = []
+        pass
 
 if __name__ == "__main__":
     seed_everything(0)
