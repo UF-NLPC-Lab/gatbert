@@ -2,6 +2,7 @@ import os
 import pathlib
 from typing import Iterable
 # 3rd Party
+from tqdm import tqdm
 import numpy as np
 import torch
 import torch_geometric
@@ -16,6 +17,7 @@ from .types import CorpusType
 from .sample import Sample
 from .cn import CN
 from .utils import batched
+from .data import get_en_pipeline, extract_lemmas
 
 class RGCN(torch.nn.Module):
     def __init__(self,
@@ -59,12 +61,13 @@ class CNTrainModule(L.LightningModule):
                  neg_ratio: int = 1,
                  message_ratio: float = 0.5):
         super().__init__()
+        self.save_hyperparameters()
         self.cn = CN(assertions_path)
         self.rgcn = RGCN(
             len(self.cn.node2id),
             len(self.cn.relation2id) * 2, # Double the number of relations to include inverse ones
             dim=dim)
-        self.cn_edges = np.array(self.cn.edges)
+        self.cn_triples = np.array(self.cn.triples)
 
 
         # Only relevant to training, not inference
@@ -92,6 +95,9 @@ class CNTrainModule(L.LightningModule):
         return np.concatenate([edges, rev], axis=1)
 
     def __make_sample(self, raw_batch: np.ndarray, with_triples=False) -> torch_geometric.data.Data:
+        if raw_batch.size == 0:
+            return torch_geometric.data.Data()
+
         head, rel, tail = raw_batch
         unique_nodes, head_tail_inds = np.unique((head, tail), return_inverse=True)
 
@@ -130,7 +136,7 @@ class CNTrainModule(L.LightningModule):
         return d
 
     def train_dataloader(self):
-        shuffled_edges = np.random.permutation(self.cn_edges)
+        shuffled_edges = np.random.permutation(self.cn_triples)
         samples = []
         for raw_batch in batched(shuffled_edges, self.pos_triples):
             raw_batch = np.stack(raw_batch, axis=-1)
@@ -139,7 +145,27 @@ class CNTrainModule(L.LightningModule):
 
     def make_predict_dataloader(self, samples: Iterable[Sample]):
         graph_samples = []
-        pass
+        node2id = self.cn.node2id
+        adj = self.cn.adj
+        rev_adj = self.cn.rev_adj
+        pipeline = get_en_pipeline()
+        samples = list(samples)
+        for s in tqdm(samples):
+            # Luo et al. only used tokens from the context to extract the original subgraph,
+            # but for embedding samples they use both target and context tokens
+            if s.is_split_into_words:
+                text = " ".join(s.target) + " " + " ".join(s.context)
+            else:
+                text = s.target + ' ' + s.context
+
+            lemmas = [lemma for lemma in extract_lemmas(pipeline, text) if lemma in node2id]
+            lemma_ids = [node2id[lemma] for lemma in lemmas]
+
+            forward_edges = [(head, rel, tail) for head in lemma_ids for (rel, tail) in adj.get(head, [])]
+            rev_edges = [(head, rel, tail) for tail in lemma_ids for (rel, head) in rev_adj.get(tail, [])]
+            edges = np.unique(forward_edges + rev_edges, axis=0).transpose()
+            graph_samples.append(self.__make_sample(edges, with_triples=False))
+        return torch_geometric.loader.DataLoader(graph_samples)
 
 if __name__ == "__main__":
     seed_everything(0)
@@ -147,9 +173,10 @@ if __name__ == "__main__":
     out_dir = "graph_logs/"
     mod = CNTrainModule(assertions_path)
     logger = CSVLogger(save_dir=out_dir, name=None)
+    logger.log_hyperparams(mod.hparams)
 
     trainer = L.Trainer(
-        max_epochs=300,
+        max_epochs=1,#300,
         logger=logger,
         deterministic=True,
         log_every_n_steps=10,

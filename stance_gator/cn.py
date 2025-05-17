@@ -10,8 +10,11 @@ class CN:
     def __init__(self, assertions_path):
         node2id = defaultdict(lambda: len(node2id))
         relation2id = defaultdict(lambda: len(relation2id))
+
+        adj = defaultdict(list)
+        rev_adj = defaultdict(list)
         
-        edges = []
+        triples = []
 
         # Deterministic as long as you use the same assertions path
         with open(assertions_path, 'r') as r:
@@ -24,9 +27,20 @@ class CN:
             head_id = node2id[head_str]
             rel_id = relation2id[relation_str]
             tail_id = node2id[tail_str]
-            edges.append( [head_id, rel_id, tail_id] )
+
+            adj[head_id].append((rel_id, tail_id))
+            rev_adj[tail_id].append((rel_id, head_id))
+
+            triples.append( [head_id, rel_id, tail_id] )
 
         self.node2id = dict(node2id)
         self.id2node = {v:k for k,v in self.node2id.items()}
         self.relation2id = dict(relation2id)
-        self.edges = edges
+
+        self.adj = dict(adj)
+        self.rev_adj = dict(rev_adj)
+
+        self.triples = triples
+        """
+        List of triples
+        """
