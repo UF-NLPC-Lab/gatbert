@@ -1,21 +1,22 @@
 # STL
 from __future__ import annotations
 # 3rd Party
+import numpy as np
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
+import torch
 import lightning as L
 # Local
 from typing import Dict, Tuple, Optional, List
 from .encoder import Encoder
 from .data import MapDataset, parse_ez_stance, parse_semeval, parse_vast
 from .constants import DEFAULT_BATCH_SIZE
-from .types import CorpusType, Transform
+from .types import CorpusType, TensorDict
 from .utils import map_func_gen
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 batch_size: int = DEFAULT_BATCH_SIZE,
-                 transforms: Optional[List[Transform]] = None
+                 batch_size: int = DEFAULT_BATCH_SIZE
                 ):
         super().__init__()
         self.save_hyperparameters()
@@ -28,17 +29,12 @@ class StanceDataModule(L.LightningDataModule):
             parse_fn = parse_vast
         else:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
-        if transforms:
-            transform_map = {
-            }
-            for t in transforms:
-                if t in transform_map:
-                    parse_fn = map_func_gen(transform_map[t], parse_fn)
 
         self.__raw_parse_fn = parse_fn
         self.__parse_fn = None
         # Has to be set explicitly (see fit_and_test.py for an example)
         self.encoder: Encoder = None
+        self.batch_size = batch_size
 
     @property
     def _parse_fn(self):
@@ -48,13 +44,17 @@ class StanceDataModule(L.LightningDataModule):
             self.__parse_fn = map_func_gen(self.encoder.encode, self.__raw_parse_fn)
         return self.__parse_fn
 
+    @property
+    def _collate_fn(self):
+        return self.encoder.collate
+
     # Protected Methods
     def _make_train_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
+        return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self._collate_fn)
     def _make_val_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
+        return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self._collate_fn)
     def _make_test_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, collate_fn=self.encoder.collate)
+        return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self._collate_fn)
 
 
 class RandomSplitDataModule(StanceDataModule):
@@ -79,14 +79,14 @@ class RandomSplitDataModule(StanceDataModule):
         super().__init__(*parent_args, **parent_kwargs)
         self.save_hyperparameters()
 
-        self.__data: Dict[str, MapDataset] = {}
+        self._data: Dict[str, MapDataset] = {}
         self.__train_ds: Dataset = None
         self.__val_ds: Dataset = None
         self.__test_ds: Dataset = None
 
     def prepare_data(self):
         for data_path in self.hparams.partitions:
-            self.__data[data_path] = MapDataset(self._parse_fn(data_path))
+            self._data[data_path] = MapDataset(self._parse_fn(data_path))
 
     def setup(self, stage):
         train_dses = []
@@ -94,7 +94,7 @@ class RandomSplitDataModule(StanceDataModule):
         test_dses = []
         for (data_prefix, (train_frac, val_frac, test_frac)) in self.hparams.partitions.items():
             train_ds, val_ds, test_ds = \
-                random_split(self.__data[data_prefix], [train_frac, val_frac, test_frac])
+                random_split(self._data[data_prefix], [train_frac, val_frac, test_frac])
             train_dses.append(train_ds)
             val_dses.append(val_ds)
             test_dses.append(test_ds)
@@ -108,3 +108,41 @@ class RandomSplitDataModule(StanceDataModule):
         return self._make_val_loader(self.__val_ds)
     def test_dataloader(self):
         return self._make_test_loader(self.__test_ds)
+
+class GraphRandomSplitDataModule(RandomSplitDataModule):
+    def __init__(self,
+                graph_data: Dict[str, str],
+                partitions: Dict[str, Tuple[float, float, float]],
+                *parent_args,
+                **parent_kwargs
+        ):
+        super().__init__(*parent_args, partitions=partitions, **parent_kwargs)
+        assert set(partitions.keys()) == set(graph_data.keys())
+        self.graph_data = graph_data
+
+        self.__parse_fn = None
+        self.__collate_fn = None
+
+    @property
+    def _parse_fn(self):
+        if not self.__parse_fn:
+            parent_parse = super()._parse_fn
+            def wrapper(corpus_path):
+                graph_data = np.load(self.graph_data[corpus_path], allow_pickle=False)
+                for text_encoding, graph_encoding in zip(parent_parse(corpus_path), graph_data):
+                    yield {**text_encoding, 'graph_embeds': torch.tensor(graph_encoding)}
+            self.__parse_fn = wrapper
+        return self.__parse_fn
+
+    @property
+    def _collate_fn(self):
+        if not self.__collate_fn:
+            parent_collate = super()._collate_fn
+            def wrapper(samples: List[TensorDict]) -> TensorDict:
+                # graph_embeds = torch.stack([s.pop('graph_embeds') for s in samples], dim=0)
+                graph_embeds = torch.stack([s['graph_embeds'] for s in samples], dim=0)
+                collated = parent_collate(samples)
+                collated['graph_embeds'] = graph_embeds
+                return collated
+            return wrapper
+        return self.__collate_fn
