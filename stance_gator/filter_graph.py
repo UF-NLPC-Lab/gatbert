@@ -1,19 +1,29 @@
 import csv
+import argparse
 # 3rd Party
 from tqdm import tqdm
 # Local
-from .data import CORPUS_PARSERS, parse_vast, get_en_pipeline, pretokenize_cn_uri, extract_lemmas
+from .data import parse_ez_stance, parse_vast, get_en_pipeline, pretokenize_cn_uri, extract_lemmas
 from .utils import Dictionary
 
-def main():
+def main(raw_args=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vast", metavar="vast_train.csv")
+    parser.add_argument("--ezstance", metavar="raw_train_all_onecol.csv")
+    parser.add_argument("-cn", metavar="assertions.tsv", required=True)
+    parser.add_argument("-o", metavar="filtered_assertions.tsv", required=True)
 
-    parser = parse_vast
-    csv_path = "/home/ethanlmines/blue_dir/datasets/VAST/vast_train.csv"
-    cn_path  = "/home/ethanlmines/blue_dir/datasets/conceptnet/luo/assertions.tsv"
-    out_path = "./temp/filter_graph.tsv"
-
+    args = parser.parse_args(raw_args)
     # csv_path = "/home/ethanlmines/blue_dir/datasets/VAST/vast_train.csv"
-    samples = list(parser(csv_path))
+    cn_path  = args.cn #"/home/ethanlmines/blue_dir/datasets/conceptnet/luo/assertions.tsv"
+    out_path = args.o #"./temp/filter_graph.tsv"
+    if args.vast:
+        samples = parse_vast(args.vast)
+    elif args.ezstance:
+        samples = parse_ez_stance(args.ezstance)
+    else:
+        raise ValueError("Provide --vast or --ezstance")
+    samples = list(samples)[:100]
     pipeline = get_en_pipeline()
 
     d = Dictionary()
