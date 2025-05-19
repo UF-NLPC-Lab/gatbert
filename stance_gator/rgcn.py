@@ -60,9 +60,11 @@ class CNEncoder(L.LightningModule):
                  dim: int = 100,
                  pos_triples: int = 50000,
                  neg_ratio: int = 1,
-                 message_ratio: float = 0.5):
+                 message_ratio: float = 0.5,
+                 reg_weight: float = 1e-2):
         super().__init__()
         self.save_hyperparameters()
+        self.reg_weight = reg_weight
         self.cn = CN(assertions_path)
         self.rgcn = RGCN(
             len(self.cn.node2id),
@@ -78,16 +80,23 @@ class CNEncoder(L.LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-2)
-
+        
     def training_step(self, batch: torch_geometric.data.Data, batch_idx):
-        _, loss = self.rgcn(
+        _, loss_ce = self.rgcn(
             x=batch.x,
             edge_index=batch.edge_index,
             edge_type=batch.edge_attr,
             triples=batch.triples,
             y=batch.y
         )
+
+        reg = torch.mean(torch.pow(self.rgcn.entity_embed.weight, 2)) + \
+            torch.mean(torch.pow(self.rgcn.relation_embed.weight, 2))
+        loss = loss_ce + self.reg_weight * reg
+        self.log('loss/ce', loss_ce)
+        self.log('loss/reg', reg)
         self.log('loss', loss)
+
         return loss
 
     def predict_step(self, batch: torch_geometric.data.Data, batch_idx):

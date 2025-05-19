@@ -19,9 +19,7 @@ def main(raw_args=None):
 
     seed_everything(args.seed_everything)
 
-    # assertions_path = "/home/ethanlmines/blue_dir/datasets/conceptnet/filtered/vast_cn.tsv"
     assertions_path = args.cn
-    # out_dir = "graph_logs/"
     mod = CNEncoder(assertions_path)
     logger = CSVLogger(save_dir=args.save_dir, name=None, version=args.version)
     logger.log_hyperparams(mod.hparams)
@@ -32,6 +30,9 @@ def main(raw_args=None):
         deterministic=True,
         log_every_n_steps=10,
         reload_dataloaders_every_n_epochs=1,
+
+        gradient_clip_algorithm='norm',
+        gradient_clip_val=1.0,
     )
     trainer.fit(model=mod, train_dataloaders=mod)
     pass
