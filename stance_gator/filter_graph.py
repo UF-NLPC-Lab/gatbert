@@ -23,7 +23,7 @@ def main(raw_args=None):
         samples = parse_ez_stance(args.ezstance)
     else:
         raise ValueError("Provide --vast or --ezstance")
-    samples = list(samples)[:100]
+    samples = list(samples)
     pipeline = get_en_pipeline()
 
     d = Dictionary()
