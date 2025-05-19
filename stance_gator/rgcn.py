@@ -27,6 +27,9 @@ class RGCN(torch.nn.Module):
                  num_bases: int = 4,
                  dropout: float = 0.25):
         super().__init__()
+        self.dim = dim
+
+
         self.entity_embed = torch.nn.Embedding(n_entities, dim)
 
         self.conv1 = RGCNConv(dim, dim, n_relations, num_bases=num_bases)
@@ -89,6 +92,17 @@ class CNTrainModule(L.LightningModule):
         self.log('loss', loss)
         return loss
 
+    def predict_step(self, batch: torch_geometric.data.Data, batch_idx):
+        if batch.x.size == 0:
+            return torch.zeros(self.rgcn.dim, device=batch.x.device)
+        node_states, _ = self.rgcn(
+            x=batch.x,
+            edge_index=batch.edge_index,
+            edge_type=batch.edge_attr
+        )
+        mean_node_state = torch.mean(node_states, dim=0)
+        return mean_node_state
+
     @staticmethod
     def add_reverse_edges(edges: np.ndarray, n_rels: int) -> np.ndarray:
         rev = np.stack([edges[2], edges[1] + n_rels, edges[0]])
@@ -150,7 +164,7 @@ class CNTrainModule(L.LightningModule):
         rev_adj = self.cn.rev_adj
         pipeline = get_en_pipeline()
         samples = list(samples)
-        for s in tqdm(samples):
+        for s in tqdm(samples, desc="Extracting subgraphs for samples"):
             # Luo et al. only used tokens from the context to extract the original subgraph,
             # but for embedding samples they use both target and context tokens
             if s.is_split_into_words:

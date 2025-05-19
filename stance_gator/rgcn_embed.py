@@ -1,11 +1,7 @@
-# STL
-import glob
-import os
 # 3rd Party
+import numpy as np
 import torch
 import lightning as L
-from lightning.pytorch.loggers import CSVLogger
-import yaml
 # Local
 from .rgcn import CNTrainModule
 from .data import CORPUS_PARSERS
@@ -15,6 +11,7 @@ if __name__ == "__main__":
     csv_path = "/home/ethanlmines/blue_dir/datasets/VAST/vast_dev.csv"
     corpus_type = 'vast'
     ckpt_path = "./graph_logs/version_1/checkpoints/epoch=0-step=25.ckpt"
+    out_path = "./temp/vast_dev_graph.npy"
 
     ckpt = torch.load(ckpt_path, weights_only=True)
     mod = CNTrainModule(**ckpt['hyper_parameters'])
@@ -26,3 +23,5 @@ if __name__ == "__main__":
 
     trainer = L.Trainer()
     predictions = trainer.predict(mod, predict_dataloader)
+    predictions = [pred.numpy() for pred in predictions]
+    predictions = np.stack(predictions)
