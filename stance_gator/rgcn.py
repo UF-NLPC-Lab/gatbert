@@ -10,8 +10,6 @@ from torch_geometric.nn import RGCNConv
 import torch_geometric.data
 import torch_geometric.loader
 import lightning as L
-from lightning.fabric.utilities.seed import seed_everything
-from lightning.pytorch.loggers import CSVLogger
 # Local
 from .types import CorpusType
 from .sample import Sample
@@ -56,7 +54,7 @@ class RGCN(torch.nn.Module):
             loss = self.loss_fn(logits, y)
         return node_state, loss
 
-class CNTrainModule(L.LightningModule):
+class CNEncoder(L.LightningModule):
     def __init__(self,
                  assertions_path: pathlib.Path,
                  dim: int = 100,
@@ -136,7 +134,7 @@ class CNTrainModule(L.LightningModule):
         split_ids = np.random.choice(np.arange(relabeled_edges.shape[1]), size=n_message_edges, replace=False)
         message_edges = relabeled_edges[:, split_ids]
         # Only do reversal on edges used for message passing
-        message_edges = CNTrainModule.add_reverse_edges(message_edges, len(self.cn.relation2id))
+        message_edges = CNEncoder.add_reverse_edges(message_edges, len(self.cn.relation2id))
         edge_index = np.stack([message_edges[0], message_edges[2]], axis=0)
         edge_attr = message_edges[1]
         # Don't need to add self-loops; RGCNConv class already does that by default
@@ -180,21 +178,3 @@ class CNTrainModule(L.LightningModule):
             edges = np.unique(forward_edges + rev_edges, axis=0).transpose()
             graph_samples.append(self.__make_sample(edges, with_triples=False))
         return torch_geometric.loader.DataLoader(graph_samples)
-
-if __name__ == "__main__":
-    seed_everything(0)
-    assertions_path = "/home/ethanlmines/blue_dir/datasets/conceptnet/filtered/vast_cn.tsv"
-    out_dir = "graph_logs/"
-    mod = CNTrainModule(assertions_path)
-    logger = CSVLogger(save_dir=out_dir, name=None)
-    logger.log_hyperparams(mod.hparams)
-
-    trainer = L.Trainer(
-        max_epochs=1,#300,
-        logger=logger,
-        deterministic=True,
-        log_every_n_steps=10,
-        reload_dataloaders_every_n_epochs=1,
-    )
-    trainer.fit(model=mod, train_dataloaders=mod)
-    pass

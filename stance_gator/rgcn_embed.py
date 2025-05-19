@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import lightning as L
 # Local
-from .rgcn import CNTrainModule
+from .rgcn import CNEncoder
 from .data import CORPUS_PARSERS
 
 if __name__ == "__main__":
@@ -14,7 +14,7 @@ if __name__ == "__main__":
     out_path = "./temp/vast_dev_graph.npy"
 
     ckpt = torch.load(ckpt_path, weights_only=True)
-    mod = CNTrainModule(**ckpt['hyper_parameters'])
+    mod = CNEncoder(**ckpt['hyper_parameters'])
     mod.load_state_dict(ckpt['state_dict'])
 
     parse_fn = CORPUS_PARSERS[corpus_type]
