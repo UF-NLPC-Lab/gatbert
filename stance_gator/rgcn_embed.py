@@ -25,3 +25,4 @@ if __name__ == "__main__":
     predictions = trainer.predict(mod, predict_dataloader)
     predictions = [pred.numpy() for pred in predictions]
     predictions = np.stack(predictions)
+    np.save(out_path, predictions, allow_pickle=False)
