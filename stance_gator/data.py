@@ -1,5 +1,6 @@
 # STL
 from __future__ import annotations
+import argparse
 import csv
 from typing import Generator
 # 3rd Party
@@ -62,6 +63,15 @@ CORPUS_PARSERS = {
     "vast": parse_vast,
     "semeval": parse_semeval
 }
+
+def add_corpus_args(parser: argparse.ArgumentParser):
+    parser.add_argument("--vast", metavar="vast_train.csv")
+    parser.add_argument("--ezstance", metavar="raw_train_all_onecol.csv")
+def get_corpus_parser(args):
+    assert sum([bool(args.vast), bool(args.ezstance)]) == 1, "Must provided one of --vast, --ezstance"
+    if args.vast:
+        return parse_vast(args.vast)
+    return  parse_ez_stance(args.ezstance)
 
 __spacy_pipeline = None
 def get_en_pipeline():

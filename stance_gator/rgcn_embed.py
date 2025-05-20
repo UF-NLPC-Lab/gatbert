@@ -1,28 +1,32 @@
+# STL
+import argparse
 # 3rd Party
 import numpy as np
 import torch
 import lightning as L
 # Local
 from .rgcn import CNEncoder
-from .data import CORPUS_PARSERS
+from .data import add_corpus_args, get_corpus_parser
 
-if __name__ == "__main__":
+def main(raw_args=None):
+    parser = argparse.ArgumentParser()
+    add_corpus_args(parser)
+    parser.add_argument("--ckpt", required=True)
+    parser.add_argument('-o', metavar="embeddings.npy", required=True)
+    args = parser.parse_args(raw_args)
 
-    csv_path = "/home/ethanlmines/blue_dir/datasets/VAST/vast_dev.csv"
-    corpus_type = 'vast'
-    ckpt_path = "./graph_logs/version_1/checkpoints/epoch=0-step=25.ckpt"
-    out_path = "./temp/vast_dev_graph.npy"
+    sample_iter = get_corpus_parser(args)
 
-    ckpt = torch.load(ckpt_path, weights_only=True)
+    ckpt = torch.load(args.ckpt, weights_only=True)
     mod = CNEncoder(**ckpt['hyper_parameters'])
     mod.load_state_dict(ckpt['state_dict'])
 
-    parse_fn = CORPUS_PARSERS[corpus_type]
-    sample_iter = parse_fn(csv_path)
     predict_dataloader = mod.make_predict_dataloader(sample_iter)
-
-    trainer = L.Trainer()
+    trainer = L.Trainer(deterministic=True)
     predictions = trainer.predict(mod, predict_dataloader)
     predictions = [pred.numpy() for pred in predictions]
     predictions = np.stack(predictions)
-    np.save(out_path, predictions, allow_pickle=False)
+    np.save(args.o, predictions, allow_pickle=False)
+
+if __name__ == "__main__":
+    main()
