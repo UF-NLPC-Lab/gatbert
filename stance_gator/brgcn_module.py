@@ -8,7 +8,7 @@ from .base_module import StanceModule
 from .constants import DEFAULT_MODEL, Stance
 from .encoder import SimpleEncoder
 
-class BsrgcnModule(StanceModule):
+class BrgcnModule(StanceModule):
     def __init__(self,
                 graph_dim: int = 100,
                 pretrained_model = DEFAULT_MODEL,
@@ -75,4 +75,4 @@ class BsrgcnModule(StanceModule):
         graph_enc = self.graph_enc_ffn(graph_embeds)
         feature_vec = torch.cat([cls_hidden_state, graph_enc], dim=1)
         logits = self.classifier(feature_vec)
-        return BsrgcnModule.Output(logits)
+        return BrgcnModule.Output(logits)
