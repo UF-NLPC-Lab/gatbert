@@ -117,7 +117,9 @@ class GraphRandomSplitDataModule(RandomSplitDataModule):
                 **parent_kwargs
         ):
         super().__init__(*parent_args, partitions=partitions, **parent_kwargs)
-        assert set(partitions.keys()) == set(graph_data.keys())
+        graph_keys = set(graph_data)
+        for k in partitions.keys():
+            assert k in graph_keys, f"File {k} has no matching graph data .npy file"
         self.graph_data = graph_data
 
         self.__parse_fn = None
