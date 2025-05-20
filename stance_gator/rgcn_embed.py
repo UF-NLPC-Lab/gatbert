@@ -22,7 +22,7 @@ def main(raw_args=None):
     mod.load_state_dict(ckpt['state_dict'])
 
     predict_dataloader = mod.make_predict_dataloader(sample_iter)
-    trainer = L.Trainer(deterministic=True)
+    trainer = L.Trainer(deterministic=True, logger=False)
     predictions = trainer.predict(mod, predict_dataloader)
     predictions = [pred.numpy() for pred in predictions]
     predictions = np.stack(predictions)
