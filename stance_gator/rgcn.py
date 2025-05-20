@@ -100,8 +100,8 @@ class CNEncoder(L.LightningModule):
         return loss
 
     def predict_step(self, batch: torch_geometric.data.Data, batch_idx):
-        if batch.x.size == 0:
-            return torch.zeros(self.rgcn.dim, device=batch.x.device)
+        if batch.x is None or batch.x.size == 0:
+            return torch.zeros(self.rgcn.dim, device=self.device)
         node_states, _ = self.rgcn(
             x=batch.x,
             edge_index=batch.edge_index,
