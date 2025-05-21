@@ -130,9 +130,9 @@ class GraphRandomSplitDataModule(RandomSplitDataModule):
         if not self.__parse_fn:
             parent_parse = super()._parse_fn
             def wrapper(corpus_path):
-                graph_data = np.load(self.graph_data[corpus_path], allow_pickle=False)
+                graph_data = np.load(self.graph_data[corpus_path], allow_pickle=True)
                 for text_encoding, graph_encoding in zip(parent_parse(corpus_path), graph_data):
-                    yield {**text_encoding, 'graph_embeds': torch.tensor(graph_encoding)}
+                    yield {**text_encoding, 'graph_embeds': torch.tensor(graph_encoding, dtype=torch.float32)}
             self.__parse_fn = wrapper
         return self.__parse_fn
 
