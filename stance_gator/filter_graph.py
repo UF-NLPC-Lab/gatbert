@@ -1,5 +1,6 @@
 import csv
 import argparse
+from collections import defaultdict
 # 3rd Party
 from tqdm import tqdm
 # Local
@@ -17,24 +18,47 @@ def main(raw_args=None):
     samples = get_sample_iter(args)
 
     cn_path  = args.cn 
-    out_path = args.o 
-    samples = list(samples)
+
+    syn_maps = defaultdict(lambda: defaultdict(set))
+    with open(cn_path, 'r') as r:
+        rows = list(csv.reader(r, delimiter='\t'))
+    for row in tqdm(rows, desc="Searching assertions for synonyms"):
+        head, tail = row[2:4]
+        head_lang = head.split('/')[2]
+        tail_lang = tail.split('/')[2]
+        if head_lang != tail_lang:
+            assert row[1] == '/r/Synonym'
+            head_toks = pretokenize_cn_uri(head)
+            tail_toks = pretokenize_cn_uri(tail)
+            if len(head_toks) == 1 and len(tail_toks) == 1:
+                head_str = head_toks[0]
+                tail_str = tail_toks[0]
+                if head_lang == 'en':
+                    syn_maps[tail_lang][tail_str].add(head_str)
+                else:
+                    assert tail_lang == 'en'
+                    syn_maps[head_lang][head_str].add(tail_str)
+    # Convert to regular dictionaries, and lists instead of sets
+    syn_maps = {lang:{lemma:list(syns) for lemma,syns in syn_map.items()} for lang, syn_map in syn_maps.items()}
 
     d = Dictionary()
+    samples = list(samples)
     for sample in tqdm(samples, desc="Extracting seeds"):
         pipeline = SPACY_PIPES[sample.lang or 'en']
-        d.update(extract_lemmas(pipeline, sample.context))
+        lemmas = extract_lemmas(pipeline, sample.context)
+        if sample.lang != 'en':
+            lang_syn_map = syn_maps[sample.lang]
+            lemmas = sum([lang_syn_map.get(l, []) for l in lemmas], [])
+        d.update(lemmas)
     top_lemmas = d.filter_extremes(no_below=2, no_above=0.5, keep_tokens=5000)
 
     filtered_rows = []
-    with open(cn_path, 'r') as r:
-        rows = list(csv.reader(r, delimiter='\t'))
     for row in tqdm(rows, desc="Filtering edges..."):
         head = pretokenize_cn_uri(row[2])
         tail = pretokenize_cn_uri(row[3])
         if (len(head) == 1 and head[0] in top_lemmas) or (len(tail) == 1 and tail[0] in top_lemmas):
             filtered_rows.append(row)
-    with open(out_path, 'w') as w:
+    with open(args.o, 'w') as w:
         writer = csv.writer(w, delimiter='\t')
         writer.writerows(filtered_rows)
 

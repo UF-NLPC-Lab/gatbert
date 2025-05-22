@@ -144,5 +144,5 @@ def pretokenize_cn_uri(uri: str):
 __tags = {"NOUN", "PNOUN", "ADJ", "ADV"}
 def extract_lemmas(pipeline, sentence: str):
     global __tags
-    return [t.lemma_ for t in pipeline(sentence) if t.pos_ in __tags]
+    return [t.lemma_.lower() for t in pipeline(sentence) if t.pos_ in __tags]
     
