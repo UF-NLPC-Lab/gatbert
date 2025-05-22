@@ -1,5 +1,6 @@
 import enum
 import re
+from typing import Literal, Dict
 
 @enum.unique
 class EzstanceDomains(enum.Enum):
@@ -23,76 +24,33 @@ class SemEvalTargets(enum.Enum):
     HILLARY_CLINTON = "Hillary Clinton"
 
 @enum.unique
-class Stance(enum.Enum):
-    NONE = 0
-    AGAINST = 1
-    FAVOR = 2
+class BaseStance(enum.IntEnum):
 
-    @staticmethod
-    def id2label():
-        return {s.value:s.name for s in Stance}
+    @classmethod
+    def label2id(cls):
+        return {s.name:s for s in cls}
 
-    @staticmethod
-    def label2id():
-        return {v:k for k,v in Stance.id2label().items()}
- 
+    @classmethod
+    def id2label(cls):
+        return {v:k for k,v in cls.label2id().items()}
+
 @enum.unique
-class NodeType(enum.Enum):
-    TOKEN = 0
-    KB = 1
+class TriStance(BaseStance):
+    neutral = 0
+    against = 1
+    favor = 2
 
-ENCODED_FIELDS = {
-    "stance",
-    "input_ids",
-    "position_ids",
+StanceType = Literal['tri']
+
+STANCE_TYPE_MAP: Dict[StanceType, BaseStance] = {
+    'tri': TriStance
 }
 
-DEFAULT_ATT_TYPE = 'edge_as_att'
 
-# DEFAULT_MODEL = "textattack/roberta-base-MNLI"
 DEFAULT_MODEL = "bert-base-uncased"
-"""
-See https://huggingface.co/textattack/roberta-base-MNLI
-"""
-
-NODE_PAD_ID = 0
-"""
-Padding ID to use when batches of nodes to equal sizes.
-"""
-
-MAX_KB_NODES = 128
-"""
-Maximum number of subwords to allow from external (not text) data.
-"""
 
 DEFAULT_BATCH_SIZE = 64
 
 DEFAULT_MAX_DEGREE = 50
 
-DEFAULT_PG_ARGS = "dbname='conceptnet5' host='127.0.0.1'"
-"""
-Default connection arguments for postgres connections
-"""
-
 CN_URI_PATT = re.compile(r'/c/en/([^/]+)')
-
-OPTUNA_STUDY_NAME = "gatbert_transe"
-
-PYKEEN_METRIC = "both.realistic.inverse_harmonic_mean_rank"
-
-@enum.unique
-class SpecialRelation(enum.Enum):
-    TOKEN_TO_TOKEN = -1
-    """
-    Token-to-token relations (that is, what a regular transformer encodes already)
-    """
-
-    TOKEN_TO_KB = -2
-    """
-    Arbitrary relation between a token and a KB node (the 'bridge' between tokens and the KG)
-    """
-
-    KB_SIM = -3
-    """
-    BERT embeddings of these two KB nodes are similar
-    """

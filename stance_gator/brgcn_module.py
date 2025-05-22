@@ -5,15 +5,16 @@ from typing import Optional
 from transformers import BertModel, BertTokenizerFast
 # Local
 from .base_module import StanceModule
-from .constants import DEFAULT_MODEL, Stance
+from .constants import DEFAULT_MODEL
 from .encoder import SimpleEncoder
 
 class BrgcnModule(StanceModule):
     def __init__(self,
                 graph_dim: int = 100,
                 pretrained_model = DEFAULT_MODEL,
+                **parent_kwargs
                 ):
-        super().__init__()
+        super().__init__(**parent_kwargs)
         self.bert = BertModel.from_pretrained(pretrained_model)
         config = self.bert.config
         hidden_size = config.hidden_size
@@ -22,7 +23,7 @@ class BrgcnModule(StanceModule):
             # torch.nn.Dropout(config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob),
             # torch.nn.Linear(hidden_size, classifier_hidden_units, bias=True),
             # torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size + graph_dim, len(Stance), bias=True)
+            torch.nn.Linear(hidden_size + graph_dim, len(self.stance_enum), bias=True)
         )
         self.loss_fct = torch.nn.CrossEntropyLoss()
 

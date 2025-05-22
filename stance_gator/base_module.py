@@ -7,11 +7,13 @@ import typing
 from .f1_calc import F1Calc
 from .encoder import Encoder
 from .output import StanceOutput
+from .constants import StanceType, STANCE_TYPE_MAP
 
 class StanceModule(L.LightningModule):
-    def __init__(self):
+    def __init__(self, stance_type: StanceType = 'tri'):
         super().__init__()
-        self.__calc = F1Calc()
+        self.stance_enum = STANCE_TYPE_MAP[stance_type]
+        self.__calc = F1Calc(self.stance_enum.label2id())
 
     @property
     @abc.abstractmethod
@@ -49,10 +51,10 @@ class StanceModule(L.LightningModule):
         self.__log_stats(self.__calc, f"{stage}")
     def __log_stats(self, calc: F1Calc, prefix):
         calc.summarize()
-        self.log(f"{prefix}_favor_f1", calc.favor_f1)
-        self.log(f"{prefix}_against_f1", calc.against_f1)
-        self.log(f"{prefix}_neutral_f1", calc.neutral_f1)
-        self.log(f"{prefix}_macro_f1", calc.macro_f1)
+        for class_name in self.stance_enum.label2id():
+            k = f'{class_name}_f1'
+            self.log(f'{prefix}_{k}', calc.results[k])
+        self.log(f'{prefix}_macro_f1', calc.results['macro_f1'])
         calc.reset()
 
     # FIXME: Figure out the more standard way to do this

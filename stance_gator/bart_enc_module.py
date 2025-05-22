@@ -5,20 +5,20 @@ from transformers import BartTokenizerFast
 # Local
 from .encoder import SimpleEncoder
 from .base_module import StanceModule
-from .constants import Stance
 from .models import BartEncForStance, BartEncForStanceConfig
 
 class BartEncModule(StanceModule):
 
     def __init__(self,
                  pretrained_model: str = 'facebook/bart-large-mnli',
-                 classifier_hidden_units: Optional[int] = None):
-        super().__init__()
+                 classifier_hidden_units: Optional[int] = None,
+                 **parent_kwargs):
+        super().__init__(**parent_kwargs)
         config = BartEncForStanceConfig.from_pretrained(
             pretrained_model,
             classifier_hidden_units=classifier_hidden_units,
-            id2label=Stance.id2label(),
-            label2id=Stance.label2id(),
+            id2label=self.stance_enum.id2label(),
+            label2id=self.stance_enum.label2id(),
         )
         self.wrapped = BartEncForStance.from_pretrained(pretrained_model, config=config)
         self.tokenizer = BartTokenizerFast.from_pretrained(pretrained_model)

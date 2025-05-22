@@ -7,7 +7,7 @@ from typing import Generator
 import torch
 import spacy
 # Local
-from .constants import Stance, EzstanceDomains
+from .constants import TriStance
 from .sample import Sample
 
 
@@ -35,7 +35,7 @@ class MapDataset(torch.utils.data.Dataset):
 
 
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
-    strstance2 = {"FAVOR": Stance.FAVOR, "AGAINST": Stance.AGAINST, "NONE": Stance.NONE}
+    strstance2 = {"FAVOR": TriStance.favor, "AGAINST": TriStance.against, "NONE": TriStance.neutral}
     def f(row):
         return Sample(row['Text'],
                       row['Target 1'],
@@ -47,9 +47,9 @@ def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
 
 def parse_vast(csv_path) -> Generator[Sample, None, None]:
     strstance2enum = {
-       "0": Stance.AGAINST,
-       "1": Stance.FAVOR,
-       "2": Stance.NONE
+       "0": TriStance.against,
+       "1": TriStance.favor,
+       "2": TriStance.neutral
     }
     # TODO: Do we still want to use "post", or one of their preprocessed versions?
     with open(csv_path, 'r') as r:
