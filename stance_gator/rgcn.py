@@ -55,8 +55,8 @@ class RGCN(torch.nn.Module):
 
 class CNEncoder(L.LightningModule):
     def __init__(self,
-                 assertions_path: pathlib.Path,
-                 dim: int = 100,
+                 cn: pathlib.Path,
+                 dim: int = 256,
                  pos_triples: int = 50000,
                  neg_ratio: int = 1,
                  message_ratio: float = 0.5,
@@ -64,7 +64,7 @@ class CNEncoder(L.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.reg_weight = reg_weight
-        self.cn = CN(assertions_path)
+        self.cn = CN(cn)
         self.rgcn = RGCN(
             len(self.cn.node2id),
             len(self.cn.relation2id) * 2, # Double the number of relations to include inverse ones
@@ -92,9 +92,10 @@ class CNEncoder(L.LightningModule):
         reg = torch.mean(torch.pow(self.rgcn.entity_embed.weight, 2)) + \
             torch.mean(torch.pow(self.rgcn.relation_embed.weight, 2))
         loss = loss_ce + self.reg_weight * reg
-        self.log('loss/ce', loss_ce)
-        self.log('loss/reg', reg)
-        self.log('loss', loss)
+        batch_size = batch.x.shape[0]
+        self.log('loss/ce', loss_ce, on_epoch=True, on_step=False, batch_size=batch_size)
+        self.log('loss/reg', reg, on_epoch=True, on_step=False, batch_size=batch_size)
+        self.log('loss', loss, on_epoch=True, on_step=False, batch_size=batch_size)
 
         return loss
 

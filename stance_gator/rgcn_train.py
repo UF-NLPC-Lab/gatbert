@@ -1,41 +1,26 @@
 # STL
-import argparse
 # 3rd Party
-import lightning as L
-from lightning.fabric.utilities.seed import seed_everything
-from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.cli import LightningCLI
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 # Local
 from .rgcn import CNEncoder
 
-
-
 def main(raw_args=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--seed_everything", default=0, type=int)
-    parser.add_argument("-cn", metavar="assertions.tsv", required=True)
-    parser.add_argument("--save_dir", required=True)
-    parser.add_argument("--version", default=None)
-    args = parser.parse_args()
-
-    seed_everything(args.seed_everything)
-
-    assertions_path = args.cn
-    mod = CNEncoder(assertions_path)
-    logger = CSVLogger(save_dir=args.save_dir, name=None, version=args.version)
-    logger.log_hyperparams(mod.hparams)
-
-    trainer = L.Trainer(
-        max_epochs=300,
-        logger=logger,
-        deterministic=True,
-        log_every_n_steps=10,
-        reload_dataloaders_every_n_epochs=1,
-
-        gradient_clip_algorithm='norm',
-        gradient_clip_val=1.0,
+    cli = LightningCLI(
+        model_class=CNEncoder,
+        seed_everything_default=0,
+        run=False,
+        trainer_defaults={
+            "callbacks": [
+                ModelCheckpoint(filename="{epoch:02d}-{loss:.3f}", mode='min', monitor='loss'),
+                EarlyStopping(monitor="loss", mode='min', patience=10)
+            ],
+            "gradient_clip_algorithm": 'norm',
+            "gradient_clip_val": 1.0,
+            "reload_dataloaders_every_n_epochs": 1
+        }
     )
-    trainer.fit(model=mod, train_dataloaders=mod)
-    pass
+    cli.trainer.fit(model=cli.model)
 
 if __name__ == "__main__":
     main()
