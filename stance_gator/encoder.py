@@ -24,10 +24,12 @@ class Encoder(abc.ABC):
         pass
 
 class SimpleEncoder(Encoder):
-    def __init__(self, tokenizer: PreTrainedTokenizerFast):
+    def __init__(self, tokenizer: PreTrainedTokenizerFast, max_context_length=256, max_target_length=64):
         self.__tokenizer = tokenizer
+        self.max_context_length = max_context_length
+        self.max_target_length = max_target_length
     def encode(self, sample: Sample):
-        rdict = encode_text(self.__tokenizer, sample)
+        rdict = encode_text(self.__tokenizer, sample, max_context_length=self.max_context_length, max_target_length=self.max_target_length)
         if sample.stance is not None:
             rdict['labels'] = torch.tensor([sample.stance.value])
         return rdict
