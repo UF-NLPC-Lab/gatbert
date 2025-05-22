@@ -11,11 +11,10 @@ import torch_geometric.data
 import torch_geometric.loader
 import lightning as L
 # Local
-from .types import CorpusType
 from .sample import Sample
 from .cn import CN
 from .utils import batched
-from .data import get_en_pipeline, extract_lemmas
+from .data import SPACY_PIPES, extract_lemmas
 
 class RGCN(torch.nn.Module):
     def __init__(self,
@@ -169,7 +168,6 @@ class CNEncoder(L.LightningModule):
         node2id = self.cn.node2id
         adj = self.cn.adj
         rev_adj = self.cn.rev_adj
-        pipeline = get_en_pipeline()
         samples = list(samples)
         for s in tqdm(samples, desc="Extracting subgraphs for samples"):
             # Luo et al. only used tokens from the context to extract the original subgraph,
@@ -179,6 +177,7 @@ class CNEncoder(L.LightningModule):
             else:
                 text = s.target + ' ' + s.context
 
+            pipeline = SPACY_PIPES[s.lang or 'en']
             lemmas = [lemma for lemma in extract_lemmas(pipeline, text) if lemma in node2id]
             lemma_ids = [node2id[lemma] for lemma in lemmas]
 

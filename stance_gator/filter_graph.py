@@ -4,7 +4,7 @@ import argparse
 from tqdm import tqdm
 # Local
 from .data import add_corpus_args, get_sample_iter
-from .data import get_en_pipeline, pretokenize_cn_uri, extract_lemmas
+from .data import SPACY_PIPES, pretokenize_cn_uri, extract_lemmas
 from .utils import Dictionary
 
 def main(raw_args=None):
@@ -19,10 +19,10 @@ def main(raw_args=None):
     cn_path  = args.cn 
     out_path = args.o 
     samples = list(samples)
-    pipeline = get_en_pipeline()
 
     d = Dictionary()
     for sample in tqdm(samples, desc="Extracting seeds"):
+        pipeline = SPACY_PIPES[sample.lang or 'en']
         d.update(extract_lemmas(pipeline, sample.context))
     top_lemmas = d.filter_extremes(no_below=2, no_above=0.5, keep_tokens=5000)
 

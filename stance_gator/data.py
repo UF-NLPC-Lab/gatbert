@@ -6,6 +6,7 @@ import csv
 import os
 from typing import Generator, Callable, Dict, Literal
 import pathlib
+from collections import defaultdict
 # 3rd Party
 import torch
 import spacy
@@ -110,12 +111,24 @@ def get_sample_iter(args) -> Generator[Sample, None, None]:
         return
     raise ValueError("Must provide one of " + ",".join([f"--{name}" for name in CORPUS_PARSERS]))
 
-__spacy_pipeline = None
-def get_en_pipeline():
-    global __spacy_pipeline
-    if __spacy_pipeline is None:
-        __spacy_pipeline = spacy.load('en_core_web_sm')
-    return __spacy_pipeline
+def load_parser(lang):
+    raise ValueError(f"Unsupported language {lang}")
+
+class __LazySpacyDict(dict):
+    def __missing__(self, lang):
+        if lang == 'en':
+            self[lang] = spacy.load('en_core_web_sm')
+        elif lang == 'de':
+            self[lang] = spacy.load('de_core_news_sm')
+        elif lang == 'it':
+            self[lang] = spacy.load('it_core_news_sm')
+        elif lang == 'fr':
+            self[lang] = spacy.load('fr_core_news_sm')
+        else:
+            raise ValueError(f"Unsupported language {lang}")
+        return self[lang]
+
+SPACY_PIPES = __LazySpacyDict()
 
 def extract_cn_baseword(uri: str):
     if uri.startswith('/'):
