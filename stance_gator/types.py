@@ -1,9 +1,7 @@
 # STL
-from typing import Dict, Literal, Tuple
+from typing import Dict, Tuple
 # 3rd Party
 import torch
-
-CorpusType = Literal['ezstance', 'semeval', 'vast']
 
 TensorDict = Dict[str, torch.Tensor]
 

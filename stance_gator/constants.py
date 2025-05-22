@@ -40,17 +40,21 @@ class TriStance(BaseStance):
     against = 1
     favor = 2
 
-StanceType = Literal['tri']
+@enum.unique
+class BiStance(BaseStance):
+    against = 0
+    favor = 1
+
+StanceType = Literal['tri', 'bi']
 
 STANCE_TYPE_MAP: Dict[StanceType, BaseStance] = {
-    'tri': TriStance
+    'tri': TriStance,
+    'bi': BiStance
 }
 
 
 DEFAULT_MODEL = "bert-base-uncased"
 
 DEFAULT_BATCH_SIZE = 64
-
-DEFAULT_MAX_DEGREE = 50
 
 CN_URI_PATT = re.compile(r'/c/en/([^/]+)')

@@ -1,5 +1,5 @@
 import dataclasses
-from typing import List, Any, Optional
+from typing import List, Optional
 # Local
 from .constants import BaseStance
 
@@ -9,4 +9,4 @@ class Sample:
     target: str | List[str]
     stance: BaseStance
     is_split_into_words: bool
-    domain: Optional[Any] = None
+    lang: Optional[str] = None

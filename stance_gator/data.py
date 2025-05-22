@@ -1,13 +1,16 @@
 # STL
 from __future__ import annotations
+import json
 import argparse
 import csv
-from typing import Generator
+import os
+from typing import Generator, Callable, Dict, Literal
+import pathlib
 # 3rd Party
 import torch
 import spacy
 # Local
-from .constants import TriStance
+from .constants import TriStance, BiStance
 from .sample import Sample
 
 
@@ -33,15 +36,13 @@ class MapDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.__samples)
 
-
 def parse_ez_stance(csv_path) -> Generator[Sample, None, None]:
     strstance2 = {"FAVOR": TriStance.favor, "AGAINST": TriStance.against, "NONE": TriStance.neutral}
     def f(row):
         return Sample(row['Text'],
                       row['Target 1'],
                       strstance2[row['Stance 1']],
-                      is_split_into_words=False,
-                      domain=row['Domain'] if 'Domain' in row else None)
+                      is_split_into_words=False)
     with open(csv_path, 'r', encoding='latin-1') as r:
         yield from map(f, csv.DictReader(r))
 
@@ -58,20 +59,56 @@ def parse_vast(csv_path) -> Generator[Sample, None, None]:
 def parse_semeval(annotations_path) -> Generator[Sample, None, None]:
     raise NotImplementedError
 
-CORPUS_PARSERS = {
+def parse_xstance(jsonl_path) -> Generator[Sample, None, None]:
+    stance_map = {
+        "AGAINST": BiStance.against,
+        "FAVOR": BiStance.favor
+    }
+    samples = []
+    with open(jsonl_path, 'r', encoding='utf-8') as r:
+        for l in r:
+            json_obj = json.loads(l)
+            yield Sample(
+                context=json_obj['comment'],
+                target=json_obj['question'],
+                stance=stance_map[json_obj['label']],
+                is_split_into_words=False,
+                lang=json_obj['language']
+            )
+    return samples
+
+CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance']
+
+StanceParser = Callable[[os.PathLike], Generator[Sample, None, None]]
+"""
+Function taking a file path and returning a generator of samples
+"""
+
+CORPUS_PARSERS: Dict[CorpusType, StanceParser] = {
     "ezstance": parse_ez_stance,
     "vast": parse_vast,
-    "semeval": parse_semeval
+    "semeval": parse_semeval,
+    "xstance": parse_xstance
 }
 
 def add_corpus_args(parser: argparse.ArgumentParser):
-    parser.add_argument("--vast", metavar="vast_train.csv")
-    parser.add_argument("--ezstance", metavar="raw_train_all_onecol.csv")
-def get_corpus_parser(args):
-    assert sum([bool(args.vast), bool(args.ezstance)]) == 1, "Must provided one of --vast, --ezstance"
-    if args.vast:
-        return parse_vast(args.vast)
-    return  parse_ez_stance(args.ezstance)
+    for name in CORPUS_PARSERS:
+        parser.add_argument(f"--{name}", type=pathlib.Path, metavar="data.(csv|jsonl)")
+
+def get_sample_iter(args) -> Generator[Sample, None, None]:
+    found_name = None
+    found_iter = None
+    for name, parse_fn in CORPUS_PARSERS.items():
+        file_path = getattr(args, name)
+        if file_path:
+            if found_name:
+                raise ValueError(f"Given both --{found_name} and --{name}")
+            found_name = name
+            found_iter = parse_fn(file_path)
+    if found_iter:
+        yield from found_iter
+        return
+    raise ValueError("Must provide one of " + ",".join([f"--{name}" for name in CORPUS_PARSERS]))
 
 __spacy_pipeline = None
 def get_en_pipeline():

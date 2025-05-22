@@ -6,7 +6,7 @@ import torch
 import lightning as L
 # Local
 from .rgcn import CNEncoder
-from .data import add_corpus_args, get_corpus_parser
+from .data import add_corpus_args, get_sample_iter
 
 def main(raw_args=None):
     parser = argparse.ArgumentParser()
@@ -15,7 +15,7 @@ def main(raw_args=None):
     parser.add_argument('-o', metavar="embeddings.npy", required=True)
     args = parser.parse_args(raw_args)
 
-    sample_iter = get_corpus_parser(args)
+    sample_iter = get_sample_iter(args)
 
     ckpt = torch.load(args.ckpt, weights_only=True)
     mod = CNEncoder(**ckpt['hyper_parameters'])
