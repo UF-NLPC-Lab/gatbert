@@ -11,7 +11,9 @@ from .base_module import StanceModule
 class BertModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
-                 classifier_hidden_units: Optional[int] = None
+                 classifier_hidden_units: Optional[int] = None,
+                 max_context_length=256,
+                 max_target_length=64
                  ):
         super().__init__()
         config = BertForStanceConfig.from_pretrained(pretrained_model,
@@ -21,7 +23,7 @@ class BertModule(StanceModule):
                                                      )
         self.wrapped = BertForStance.from_pretrained(pretrained_model, config=config)
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
-        self.__encoder = SimpleEncoder(self.tokenizer)
+        self.__encoder = SimpleEncoder(self.tokenizer, max_context_length=max_context_length, max_target_length=max_target_length)
     @property
     def encoder(self):
         return self.__encoder
