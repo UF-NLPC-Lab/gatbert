@@ -54,6 +54,80 @@ class RGCN(torch.nn.Module):
             loss = self.loss_fn(logits, y)
         return node_state, loss
 
+
+def text2edges(cn: CN, s: Sample) -> np.ndarray:
+    node2id = cn.node2id
+    adj = cn.adj
+    rev_adj = cn.rev_adj
+    if s.is_split_into_words:
+        text = " ".join(s.target) + " " + " ".join(s.context)
+    else:
+        text = s.target + ' ' + s.context
+
+    lang = s.lang or 'en'
+    pipeline = SPACY_PIPES[lang]
+    lemmas = [lemma for lemma in extract_lemmas(pipeline, text) if lemma in node2id]
+    lemma_ids = [node2id[lemma] for lemma in lemmas]
+
+    forward_edges = [(head, rel, tail) for head in lemma_ids for (rel, tail) in adj.get(head, [])]
+    rev_edges = [(head, rel, tail) for tail in lemma_ids for (rel, head) in rev_adj.get(tail, [])]
+    edges = np.unique(forward_edges + rev_edges, axis=0).transpose()
+    return edges
+
+
+def make_graph_sample(raw_batch: np.ndarray,
+                      n_relations,
+                      message_ratio: float = 1.0,
+                      with_triples: bool = False,
+                      neg_ratio: int = 1
+                      ) -> torch_geometric.data.Data:
+    if raw_batch.size == 0:
+        return torch_geometric.data.Data(
+            x=torch.empty(0, dtype=torch.long),
+            edge_index=torch.empty([2, 0], dtype=torch.long),
+            edge_attr=torch.empty(0, dtype=torch.long)
+        )
+
+    head, rel, tail = raw_batch
+    unique_nodes, head_tail_inds = np.unique((head, tail), return_inverse=True)
+
+    relabeled_edges = np.stack([head_tail_inds[0], rel, head_tail_inds[1]], axis=0)
+
+    # Make triples to be scored
+    if with_triples:
+        neg_samples = np.tile(relabeled_edges, (1, neg_ratio))
+        alterations = np.random.choice(unique_nodes.shape[0], size=neg_samples.shape[1])
+        alter_head = np.random.uniform(size=neg_samples.shape[1]) > 0.5
+        neg_samples[0, alter_head] = alterations[alter_head]
+        neg_samples[2, ~alter_head] = alterations[~alter_head]
+        triples = np.concatenate([relabeled_edges, neg_samples], axis=1)
+        y = np.concatenate([np.ones(relabeled_edges.shape[1]), np.zeros(neg_samples.shape[1])])
+        triples = torch.tensor(triples)
+        y = torch.tensor(y)
+    else:
+        triples = None
+        y = None
+
+    if message_ratio < 1:
+        n_message_edges = int(message_ratio * relabeled_edges.shape[-1])
+        split_ids = np.random.choice(np.arange(relabeled_edges.shape[1]), size=n_message_edges, replace=False)
+        message_edges = relabeled_edges[:, split_ids]
+    else:
+        message_edges = relabeled_edges
+    # Only do reversal on edges used for message passing
+    message_edges = CNEncoder.add_reverse_edges(message_edges, n_relations)
+    edge_index = np.stack([message_edges[0], message_edges[2]], axis=0)
+    edge_attr = message_edges[1]
+    # Don't need to add self-loops; RGCNConv class already does that by default
+
+    d = torch_geometric.data.Data(x=torch.tensor(unique_nodes),
+             edge_index=torch.tensor(edge_index),
+             edge_attr=torch.tensor(edge_attr),
+             y=y)
+    # Non-standard attributes
+    d.triples = triples
+    return d
+
 class CNEncoder(L.LightningModule):
     def __init__(self,
                  cn: pathlib.Path,
@@ -101,6 +175,9 @@ class CNEncoder(L.LightningModule):
         return loss
 
     def predict_step(self, batch: torch_geometric.data.Data, batch_idx):
+        return self(batch)
+
+    def forward(self, batch):
         node_states, _ = self.rgcn(
             x=batch.x,
             edge_index=batch.edge_index,

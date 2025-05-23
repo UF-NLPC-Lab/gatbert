@@ -5,6 +5,7 @@ import numpy as np
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import torch
 import lightning as L
+from tqdm import tqdm
 # Local
 from typing import Dict, Tuple, List
 from .encoder import Encoder
@@ -81,7 +82,8 @@ class RandomSplitDataModule(StanceDataModule):
 
     def prepare_data(self):
         for data_path in self.hparams.partitions:
-            self._data[data_path] = MapDataset(self._parse_fn(data_path))
+            parse_iter = tqdm(self._parse_fn(data_path), desc=f"Parsing {data_path}")
+            self._data[data_path] = MapDataset(parse_iter)
 
     def setup(self, stage):
         train_dses = []
