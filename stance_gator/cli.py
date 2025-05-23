@@ -20,5 +20,6 @@ def cli_main(**cli_kwargs):
             "max_epochs": 1000,
             "deterministic": True
         },
+        seed_everything_default=0,
         **cli_kwargs
     )

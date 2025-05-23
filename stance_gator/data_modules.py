@@ -6,11 +6,11 @@ from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import torch
 import lightning as L
 # Local
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, List
 from .encoder import Encoder
-from .data import MapDataset, parse_ez_stance, parse_semeval, parse_vast
+from .data import MapDataset, CORPUS_PARSERS, CorpusType
 from .constants import DEFAULT_BATCH_SIZE
-from .types import CorpusType, TensorDict
+from .types import TensorDict
 from .utils import map_func_gen
 
 class StanceDataModule(L.LightningDataModule):
@@ -21,14 +21,9 @@ class StanceDataModule(L.LightningDataModule):
         super().__init__()
         self.save_hyperparameters()
 
-        if corpus_type == 'ezstance':
-            parse_fn = parse_ez_stance
-        elif corpus_type == 'semeval':
-            parse_fn = parse_semeval
-        elif corpus_type == 'vast':
-            parse_fn = parse_vast
-        else:
+        if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
+        parse_fn = CORPUS_PARSERS[corpus_type]
 
         self.__raw_parse_fn = parse_fn
         self.__parse_fn = None
