@@ -16,7 +16,7 @@ class JointModule(StanceModule):
                 cn_path: pathlib.Path,
                 graph_dim: int = 256,
                 pretrained_model = DEFAULT_MODEL,
-                warmup_epochs: int = 1,
+                warmup_epochs: int = 5,
                 **parent_kwargs
                 ):
         super().__init__(**parent_kwargs)
