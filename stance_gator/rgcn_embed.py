@@ -18,6 +18,7 @@ def main(raw_args=None):
     sample_iter = get_sample_iter(args)
 
     ckpt = torch.load(args.ckpt, weights_only=True)
+    ckpt['hyper_parameters'].pop('_instantiator', None)
     mod = CNEncoder(**ckpt['hyper_parameters'])
     mod.load_state_dict(ckpt['state_dict'])
 
