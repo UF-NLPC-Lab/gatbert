@@ -10,6 +10,7 @@ from torch_geometric.nn import RGCNConv
 import torch_geometric.data
 import torch_geometric.loader
 import lightning as L
+import torch_scatter
 # Local
 from .sample import Sample
 from .cn import CN
@@ -100,14 +101,17 @@ class CNEncoder(L.LightningModule):
         return loss
 
     def predict_step(self, batch: torch_geometric.data.Data, batch_idx):
-        if batch.x is None or batch.x.size == 0:
-            return torch.zeros(self.rgcn.dim, device=self.device)
         node_states, _ = self.rgcn(
             x=batch.x,
             edge_index=batch.edge_index,
             edge_type=batch.edge_attr
         )
-        mean_node_state = torch.mean(node_states, dim=0)
+        mean_node_state = torch_scatter.scatter(src=node_states,
+                                                index=batch.batch,
+                                                dim=0,
+                                                dim_size=batch.ptr.shape[0] - 1,
+                                                reduce='mean')
+
         return mean_node_state
 
     @staticmethod
@@ -117,7 +121,11 @@ class CNEncoder(L.LightningModule):
 
     def __make_sample(self, raw_batch: np.ndarray, with_triples=False) -> torch_geometric.data.Data:
         if raw_batch.size == 0:
-            return torch_geometric.data.Data()
+            return torch_geometric.data.Data(
+                x=torch.empty(0, dtype=torch.long),
+                edge_index=torch.empty([2, 0], dtype=torch.long),
+                edge_attr=torch.empty(0, dtype=torch.long)
+            )
 
         head, rel, tail = raw_batch
         unique_nodes, head_tail_inds = np.unique((head, tail), return_inverse=True)
@@ -164,7 +172,7 @@ class CNEncoder(L.LightningModule):
             samples.append(self.__make_sample(raw_batch, with_triples=True))
         return torch_geometric.loader.DataLoader(samples)
 
-    def make_predict_dataloader(self, samples: Iterable[Sample]):
+    def make_predict_dataloader(self, samples: Iterable[Sample], batch_size=64):
         graph_samples = []
         node2id = self.cn.node2id
         adj = self.cn.adj
@@ -178,7 +186,8 @@ class CNEncoder(L.LightningModule):
             else:
                 text = s.target + ' ' + s.context
 
-            pipeline = SPACY_PIPES[s.lang or 'en']
+            lang = s.lang or 'en'
+            pipeline = SPACY_PIPES[lang]
             lemmas = [lemma for lemma in extract_lemmas(pipeline, text) if lemma in node2id]
             lemma_ids = [node2id[lemma] for lemma in lemmas]
 
@@ -186,4 +195,4 @@ class CNEncoder(L.LightningModule):
             rev_edges = [(head, rel, tail) for tail in lemma_ids for (rel, head) in rev_adj.get(tail, [])]
             edges = np.unique(forward_edges + rev_edges, axis=0).transpose()
             graph_samples.append(self.__make_sample(edges, with_triples=False))
-        return torch_geometric.loader.DataLoader(graph_samples)
+        return torch_geometric.loader.DataLoader(graph_samples, batch_size=batch_size)
