@@ -80,12 +80,11 @@ class RandomSplitDataModule(StanceDataModule):
         self.__val_ds: Dataset = None
         self.__test_ds: Dataset = None
 
-    def prepare_data(self):
+    def setup(self, stage):
         for data_path in self.hparams.partitions:
             parse_iter = tqdm(self._parse_fn(data_path), desc=f"Parsing {data_path}")
             self._data[data_path] = MapDataset(parse_iter)
 
-    def setup(self, stage):
         train_dses = []
         val_dses = []
         test_dses = []
