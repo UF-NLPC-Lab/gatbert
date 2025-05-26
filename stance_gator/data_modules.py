@@ -1,5 +1,6 @@
 # STL
 from __future__ import annotations
+import copy
 # 3rd Party
 import numpy as np
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
@@ -8,16 +9,20 @@ import lightning as L
 from tqdm import tqdm
 # Local
 from typing import Dict, Tuple, List
+import random
+from .sample import Sample
+from .prompts import PROMPT_MAP, HYP_MAP
 from .encoder import Encoder
 from .data import MapDataset, CORPUS_PARSERS, CorpusType
-from .constants import DEFAULT_BATCH_SIZE
+from .constants import DEFAULT_BATCH_SIZE, BiStance
 from .types import TensorDict
 from .utils import map_func_gen
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
                  corpus_type: CorpusType,
-                 batch_size: int = DEFAULT_BATCH_SIZE
+                 batch_size: int = DEFAULT_BATCH_SIZE,
+                 prompt: bool = False
                 ):
         super().__init__()
         self.save_hyperparameters()
@@ -25,6 +30,32 @@ class StanceDataModule(L.LightningDataModule):
         if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         parse_fn = CORPUS_PARSERS[corpus_type]
+        if prompt:
+            def wrap_prompt(sample: Sample):
+                copied = copy.deepcopy(sample)
+                lang = sample.lang or 'en'
+                assert not sample.is_split_into_words
+
+                if lang == 'fr':
+                    prompt = 'Intervieweur: "{target}" Politicien: "{context}" '
+                else:
+                    assert lang == 'de'
+                    prompt = 'Interviewer: "{target}" Politiker: "{context}"'
+                copied.context = prompt.format(target=sample.target, context=sample.context)
+
+                if random.uniform(0, 1) > 0.5:
+                    copied.stance = BiStance((sample.stance + 1) % 2)
+                    if lang == 'de':
+                        sample.target = "Der Politiker ist anderer Meinung als der Interviewer."
+                    else:
+                        sample.target = "Le politicien n'est pas d'accord avec l'intervieweur."
+                else:
+                    if lang == 'fr':
+                        sample.target = "Le politicien était d'accord avec l'intervieweur."
+                    else:
+                        sample.target = "Der Politiker stimmt dem Interviewer zu."
+                return copied
+            parse_fn = map_func_gen(wrap_prompt, parse_fn)
 
         self.__raw_parse_fn = parse_fn
         self.__parse_fn = None
