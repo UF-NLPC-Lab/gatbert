@@ -17,12 +17,14 @@ class JointModule(StanceModule):
                 graph_dim: int = 256,
                 pretrained_model = DEFAULT_MODEL,
                 warmup_epochs: int = 5,
+                mask_rate: float = 0.75,
                 **parent_kwargs
                 ):
         super().__init__(**parent_kwargs)
 
         self.rgcn = CNEncoder(cn_path, dim=graph_dim)
         self.cn = self.rgcn.cn
+        self.mask_rate = mask_rate
 
         self.bert = BertModel.from_pretrained(pretrained_model)
         config = self.bert.config
@@ -77,7 +79,7 @@ class JointModule(StanceModule):
     def training_step(self, batch, batch_idx):
         if self.current_epoch < self.__warmup_epochs:
             # Randomly mask some of the hidden units from BERT 
-            mask = torch.rand((1, self.hidden_size), device=self.device) > 0.75
+            mask = torch.rand((1, self.hidden_size), device=self.device) > self.mask_rate
             batch['mask'] = mask
         return super().training_step(batch, batch_idx)
 
