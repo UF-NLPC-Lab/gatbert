@@ -78,7 +78,17 @@ def parse_xstance(jsonl_path) -> Generator[Sample, None, None]:
             )
     return samples
 
-CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance']
+def parse_cnstance(csv_path) -> Generator[Sample, None, None]:
+    with open(csv_path, 'r') as r:
+        for row in csv.DictReader(r):
+            yield Sample(
+                context=pretokenize_cn_uri(row['Head']),
+                target=pretokenize_cn_uri(row['Tail']),
+                stance=TriStance(int(row['Stance'])),
+                is_split_into_words=True
+            )
+
+CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance', 'cnstance']
 
 StanceParser = Callable[[os.PathLike], Generator[Sample, None, None]]
 """
@@ -89,7 +99,8 @@ CORPUS_PARSERS: Dict[CorpusType, StanceParser] = {
     "ezstance": parse_ez_stance,
     "vast": parse_vast,
     "semeval": parse_semeval,
-    "xstance": parse_xstance
+    "xstance": parse_xstance,
+    "cnstance": parse_cnstance
 }
 
 def add_corpus_args(parser: argparse.ArgumentParser):

@@ -82,23 +82,26 @@ def main():
     rng.shuffle(neg_samples)
     rng.shuffle(related_samples)
 
+    written = 0
     with open(args.o, 'w') as w:
         writer = csv.writer(w)
         writer.writerow(["Stance", "Head", "Tail"])
 
         # Round-robin allocate samples from each class
-        aggregated = []
-        while len(aggregated) < max_samples:
+        while written < max_samples:
             if pos_samples:
                 writer.writerow([TriStance.favor.value, *pos_samples.pop()])
+                written += 1
             else:
                 break
-            if neg_samples and len(aggregated) < max_samples:
+            if neg_samples and written < max_samples:
                 writer.writerow([TriStance.against.value, *neg_samples.pop()])
+                written += 1
             else:
                 break
-            if related_samples and len(aggregated) < max_samples:
+            if related_samples and written < max_samples:
                 writer.writerow([TriStance.neutral.value, *related_samples.pop()])
+                written += 1
             else:
                 break
 
