@@ -1,43 +1,54 @@
 from __future__ import annotations
 from collections import namedtuple, defaultdict
 from itertools import product
+import csv
 # 3rd Party
 import networkx as nx
 import pathlib
 import torch
 import numpy as np
+from tqdm import tqdm
 # Local
 from .base_module import StanceModule
 from .cn import CN
 from .encoder import Encoder, keyed_pad, keyed_scalar_stack
 from .sample import Sample
-from .data import SPACY_PIPES, extract_lemmas
+from .data import SPACY_PIPES, extract_lemmas, extract_cn_baseword
 from .utils import time_block
 
-class AltCN(CN):
+class AltCN:
     def __init__(self, assertions_path):
-        super().__init__(assertions_path)
+        # Deterministic as long as you use the same assertions path
+        with open(assertions_path, 'r') as r:
+            reader = csv.reader(r, delimiter='\t')
+            rows = list(reader)
         nx_edges = defaultdict(set)
+        node2id = defaultdict(lambda: len(node2id))
+        relation2id = defaultdict(lambda: len(relation2id))
+        for row in tqdm(rows):
+            relation_str, head, tail = row[1:4]
+            head_lang = head.split('/')[2]
+            tail_lang = tail.split('/')[2]
+            assert head_lang == 'en' and tail_lang == 'en'
+            head_str = extract_cn_baseword(head)
+            tail_str = extract_cn_baseword(tail)
+            head_id = node2id[head_str]
+            rel_id = relation2id[relation_str]
+            tail_id = node2id[tail_str]
+            nx_edges[head_id, tail_id].add(rel_id)
+
+        self.node2id = dict(node2id)
+        self.id2node = {v:k for k,v in self.node2id.items()}
+        self.relation2id = dict(relation2id)
 
         self.G = nx.DiGraph()
-        with time_block("Edge loop"):
-            for head, edges in self.adj.items():
-                for (rel, tail) in edges:
-                    nx_edges[head, tail].add(rel)
         with time_block("label loop"):
             for (head, tail), rels in nx_edges.items():
                 for_rels = list(rels)
-                back_rels = [(rel + len(self.relation2id)) % (2 * len(self.relation2id)) for rel in for_rels]
+                back_rels = [(rel_id + len(self.relation2id)) % (2 * len(self.relation2id)) for rel_id in for_rels]
                 self.G.add_edge(head, tail, rel=for_rels)
                 self.G.add_edge(tail, head, rel=back_rels)
         self.paths = dict()
-
-        # largest_connected_comp = max(nx.connected_components(self.G.to_undirected()), key=len)
-        # print(f"Pruning to largest connected component of {len(largest_connected_comp)} nodes")
-        # self.G.remove_nodes_from([n for n in self.G if n not in largest_connected_comp])
-
-        # self.node2id = {n:id for n,id in self.node2id.items() if id in largest_connected_comp}
-        # self.id2node = {v:k for k,v in self.node2id.items()}
 
     def get_shortest_path(self, head, tail):
         if (head, tail) in self.paths:
@@ -170,6 +181,7 @@ class WalkModule(StanceModule):
             if not paths:
                 self.empty_count += 1
                 feature_vec = torch.empty([0, self.feature_size])
+                return None
             else:
                 feature_vec = torch.tensor(np.stack(paths))
             return {
