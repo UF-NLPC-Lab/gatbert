@@ -70,7 +70,7 @@ class SentModule(StanceModule):
         labels = batch.pop('labels').view(-1)
         stance_vals, _ = self(**batch)
 
-        preds = torch.where(stance_vals > .5, TriStance.favor, torch.where(stance_vals < .5, TriStance.against, TriStance.neutral))
+        preds = torch.where(stance_vals > .5, TriStance.favor, torch.where(stance_vals < -.5, TriStance.against, TriStance.neutral))
         self._calc.record(preds, labels)
 
 
