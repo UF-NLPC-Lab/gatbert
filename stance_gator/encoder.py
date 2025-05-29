@@ -31,7 +31,7 @@ class SimpleEncoder(Encoder):
     def encode(self, sample: Sample):
         rdict = encode_text(self.__tokenizer, sample, max_context_length=self.max_context_length, max_target_length=self.max_target_length)
         if sample.stance is not None:
-            rdict['labels'] = torch.tensor([sample.stance.value])
+            rdict['labels'] = torch.tensor([int(sample.stance)])
         return rdict
     def collate(self, samples: List[TensorDict]) -> TensorDict:
         rdict= collate_ids(self.__tokenizer, samples, return_attention_mask=True)

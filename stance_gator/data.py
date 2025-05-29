@@ -4,9 +4,11 @@ import json
 import argparse
 import csv
 import os
-from typing import Generator, Callable, Dict, Literal
+from typing import Generator, Callable, Dict, Literal, Tuple
 import pathlib
-from collections import defaultdict
+import glob
+import random
+import math
 # 3rd Party
 import torch
 import spacy
@@ -78,7 +80,65 @@ def parse_xstance(jsonl_path) -> Generator[Sample, None, None]:
             )
     return samples
 
-CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance']
+
+def _calc_yt_stance_probs(nviews: int, nlikes: int, ncomments: int, scale: float = 1.) -> Tuple[float, float, float]:
+    z = nlikes / scale / ncomments - 1
+    like_prob = 1 / (1 + math.exp(-z))
+    rval = [0] * 3
+    rval[TriStance.against] = 1 - like_prob
+    rval[TriStance.neutral] = 0
+    rval[TriStance.favor] = like_prob
+    return tuple(rval)
+
+def _calc_yt_stance_probs(nviews: int, nlikes: int, ncomments: int, scale: float = 2.) -> Tuple[float, float, float]:
+    z = nlikes / scale / ncomments - 1
+    like_prob = 1 / (1 + math.exp(-z))
+    if like_prob > .5:
+        neg_prob = (1 - like_prob) / 2
+    else:
+        neg_prob = 1 - like_prob
+        like_prob /= 2
+    neu_prob = 1 - like_prob - neg_prob
+
+    rval = [0] * 3
+    rval[TriStance.against] = neg_prob
+    rval[TriStance.neutral] = neu_prob
+    rval[TriStance.favor] = like_prob
+    return tuple(rval)
+
+def parse_yt(yt_dir) -> Generator[Sample, None, None]:
+    yt_dir = pathlib.Path(yt_dir)
+    vid_titles = dict()
+    vid_probs = dict()
+
+    stance_choices = list(range(len(TriStance)))
+
+    for stats_file in  glob.glob(str(yt_dir / "stats" / "*.json")):
+        with open(stats_file, 'r') as r:
+            json_obj = json.load(r)
+        for item in json_obj['items']:
+            video_id = item['id']
+            vid_titles[video_id] = item['snippet']['title']
+            stats = item['statistics']
+            vid_probs[video_id] = _calc_yt_stance_probs(int(stats['viewCount']),
+                                                       int(stats['likeCount']),
+                                                       int(stats['commentCount']))
+    for comments_file in glob.glob(str(yt_dir / "comments" / "*.json")):
+        with open(comments_file, 'r') as r:
+            json_obj = json.load(r)
+        for item in json_obj['items']:
+            snippet = item['snippet']['topLevelComment']['snippet']
+            context = snippet['textOriginal']
+            video_id = snippet['videoId']
+            target = vid_titles[video_id]
+            probs = vid_probs[video_id]
+            stance = random.choices(stance_choices, weights=probs)[0]
+            yield Sample(context=context,
+                         target=target,
+                         stance=stance,
+                         is_split_into_words=False)
+
+CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance', 'yt']
 
 StanceParser = Callable[[os.PathLike], Generator[Sample, None, None]]
 """
@@ -89,7 +149,8 @@ CORPUS_PARSERS: Dict[CorpusType, StanceParser] = {
     "ezstance": parse_ez_stance,
     "vast": parse_vast,
     "semeval": parse_semeval,
-    "xstance": parse_xstance
+    "xstance": parse_xstance,
+    "yt": parse_yt
 }
 
 def add_corpus_args(parser: argparse.ArgumentParser):
