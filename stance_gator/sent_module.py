@@ -28,9 +28,8 @@ class SentModule(StanceModule):
             torch.nn.Dropout(config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob),
             torch.nn.Linear(feature_size, feature_size, bias=True),
             torch.nn.ReLU(),
-            torch.nn.Linear(feature_size, 1, bias=True),
-            torch.nn.Tanh(),
-            torch.nn.Flatten(start_dim=-2, end_dim=-1)
+            torch.nn.Linear(feature_size, len(self.stance_enum), bias=True),
+            torch.nn.Softmax(dim=-1)
         )
 
         self.loss_func = torch.nn.MSELoss()
@@ -58,19 +57,17 @@ class SentModule(StanceModule):
         attention_probs = torch.softmax(attention_logits, dim=-1)
 
         token_sent_vals = self.sent_classifier(context_hidden_states)
-        seq_stance_vals = torch.sum(attention_probs * token_sent_vals, dim=-1)
+        seq_stance_vals = torch.sum(torch.unsqueeze(attention_probs, dim=-1) * token_sent_vals, dim=-2)
 
         loss = None
         if labels is not None:
-            labels = torch.where(labels == TriStance.favor, 1., torch.where(labels == TriStance.against, -1., 0.))
+            labels = torch.nn.functional.one_hot(labels, num_classes=len(self.stance_enum)).to(torch.float)
             loss = self.loss_func(seq_stance_vals, labels)
         return self.Output(seq_stance_vals, loss)
 
     def _eval_step(self, batch, batch_idx):
         labels = batch.pop('labels').view(-1)
-        stance_vals, _ = self(**batch)
-
-        preds = torch.where(stance_vals > .5, TriStance.favor, torch.where(stance_vals < -.5, TriStance.against, TriStance.neutral))
+        preds, _ = self(**batch)
         self._calc.record(preds, labels)
 
 
