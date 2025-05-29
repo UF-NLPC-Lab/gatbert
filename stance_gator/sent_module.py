@@ -1,5 +1,6 @@
 from collections import namedtuple
-import typing
+import dataclasses
+from typing import Optional
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
@@ -43,7 +44,23 @@ class SentModule(StanceModule):
     def encoder(self):
         return self.__encoder
 
-    Output = namedtuple("SentOutput", field_names=["stance_vals", "loss"])
+    @dataclasses.dataclass
+    class Output:
+        probs: torch.Tensor
+        loss: Optional[torch.Tensor]
+
+    Output = namedtuple("SentOutput", field_names=["probs", "loss"])
+
+    def predict_sent(self, context, context_mask):
+        context_output = self.bert(**context)
+        context_hidden_states = context_output.last_hidden_state
+        token_sent_vals = self.sent_classifier(context_hidden_states)
+
+        masked_states = token_sent_vals * torch.unsqueeze(context_mask, dim=-1)
+        summed = torch.sum(masked_states, dim=1)
+        n_tokens = torch.sum(context_mask, dim=-1, keepdim=True)
+        prob_dist = summed / n_tokens
+        return prob_dist
 
     def forward(self, context, target, context_mask, labels=None):
         context_output = self.bert(**context)
@@ -98,11 +115,11 @@ class SentModule(StanceModule):
 
         
         def collate(self, samples):
-            rdict = {
-                "context": collate_ids(self.tokenizer, [s['context'] for s in samples], return_attention_mask=True),
-                "target" : collate_ids(self.tokenizer, [s['target'] for s in samples],  return_attention_mask=True),
-                "labels" : keyed_scalar_stack(samples, 'labels'),
-                "context_mask": keyed_pad(samples, 'context_mask', False)
-            }
+            rdict = {}
+            rdict['context'] = collate_ids(self.tokenizer, [s['context'] for s in samples], return_attention_mask=True)
+            rdict['labels'] = keyed_scalar_stack(samples, 'labels')
+            rdict['context_mask'] = keyed_pad(samples, 'context_mask', False)
+            if "target" in samples[0]:
+                rdict['target'] = collate_ids(self.tokenizer, [s['target'] for s in samples],  return_attention_mask=True)
             return rdict
 
