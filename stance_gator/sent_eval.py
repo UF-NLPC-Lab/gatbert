@@ -16,8 +16,10 @@ def main(raw_args=None):
     args = parser.parse_args(raw_args)
 
     ckpt = torch.load(args.ckpt)
-    # FIXME: Load the hyperparameters
-    sent_mod = SentModule()
+    hparams = ckpt['hyper_parameters']
+    hparams.pop('_class_path')
+    hparams.pop('_instantiator')
+    sent_mod = SentModule(**hparams)
     sent_mod.load_state_dict(ckpt['state_dict'])
     sent_mod.eval()
     assert sent_mod.stance_enum is TriStance
