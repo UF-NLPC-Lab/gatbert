@@ -1,14 +1,14 @@
-from collections import namedtuple
-import dataclasses
 from typing import Optional
+import dataclasses
 # 3rd Party
 import torch
 from transformers import BertModel, BertTokenizerFast, PreTrainedTokenizerFast
+from transformers.utils.generic import ModelOutput
 # Local
 from .sample import Sample
 from .base_module import StanceModule
 from .constants import DEFAULT_MODEL, TriStance
-from .encoder import SimpleEncoder, Encoder, keyed_scalar_stack, collate_ids, keyed_pad
+from .encoder import Encoder, keyed_scalar_stack, collate_ids, keyed_pad
 
 class SentModule(StanceModule):
     def __init__(self,
@@ -16,6 +16,7 @@ class SentModule(StanceModule):
                 **parent_kwargs
                 ):
         super().__init__(**parent_kwargs)
+        self.save_hyperparameters()
         assert self.stance_enum == TriStance
 
         self.bert = BertModel.from_pretrained(pretrained_model)
@@ -45,11 +46,12 @@ class SentModule(StanceModule):
         return self.__encoder
 
     @dataclasses.dataclass
-    class Output:
-        probs: torch.Tensor
-        loss: Optional[torch.Tensor]
+    class Output(ModelOutput):
+        token_sents: torch.Tensor
+        stance_prob: Optional[torch.Tensor] = None
+        attention: Optional[torch.Tensor] = None
+        loss: Optional[torch.Tensor] = None
 
-    Output = namedtuple("SentOutput", field_names=["probs", "loss"])
 
     def predict_sent(self, context, context_mask):
         context_output = self.bert(**context)
@@ -62,29 +64,35 @@ class SentModule(StanceModule):
         prob_dist = summed / n_tokens
         return prob_dist
 
-    def forward(self, context, target, context_mask, labels=None):
+    def forward(self, context, target=None, context_mask=None, labels=None):
         context_output = self.bert(**context)
         context_hidden_states = context_output.last_hidden_state
-
-        target_output = self.bert(**target)
-        target_features = target_output.last_hidden_state[:, 0]
-
-        attention_logits = torch.squeeze(torch.matmul(context_hidden_states, torch.unsqueeze(target_features, -1))) / self.att_scale
-        attention_logits = attention_logits + torch.where(context_mask, 0, -torch.inf)
-        attention_probs = torch.softmax(attention_logits, dim=-1)
-
-        token_sent_vals = self.sent_classifier(context_hidden_states)
-        seq_stance_vals = torch.sum(torch.unsqueeze(attention_probs, dim=-1) * token_sent_vals, dim=-2)
+        token_sents = self.sent_classifier(context_hidden_states)
 
         loss = None
-        if labels is not None:
-            labels = torch.nn.functional.one_hot(labels, num_classes=len(self.stance_enum)).to(torch.float)
-            loss = self.loss_func(seq_stance_vals, labels)
-        return self.Output(seq_stance_vals, loss)
+        attention = None
+        stance_prob = None
+        if target is not None and context_mask is not None:
+            target_output = self.bert(**target)
+            target_features = target_output.last_hidden_state[:, 0]
+            attention_logits = torch.squeeze(torch.matmul(context_hidden_states, torch.unsqueeze(target_features, -1))) / self.att_scale
+            attention_logits = attention_logits + torch.where(context_mask, 0, -torch.inf)
+            attention = torch.softmax(attention_logits, dim=-1)
+
+            stance_prob = torch.sum(torch.unsqueeze(attention, dim=-1) * token_sents, dim=-2)
+            if labels is not None:
+                labels = torch.nn.functional.one_hot(labels, num_classes=len(self.stance_enum)).to(torch.float)
+                loss = self.loss_func(stance_prob, labels)
+
+        return SentModule.Output(token_sents=token_sents,
+                                 stance_prob=stance_prob,
+                                 attention=attention,
+                                 loss=loss)
 
     def _eval_step(self, batch, batch_idx):
         labels = batch.pop('labels').view(-1)
-        preds, _ = self(**batch)
+        res = self(**batch)
+        preds = res.stance_prob
         self._calc.record(preds, labels)
 
 
