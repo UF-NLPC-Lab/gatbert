@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 # Local
+from .torch_utils import load_module
 from .constants import DEFAULT_BATCH_SIZE
 from .sent_module import SentModule
 from .constants import TriStance
@@ -15,14 +16,10 @@ def main(raw_args=None):
     parser.add_argument("--ckpt", required=True)
     args = parser.parse_args(raw_args)
 
-    ckpt = torch.load(args.ckpt)
-    hparams = ckpt['hyper_parameters']
-    hparams.pop('_class_path')
-    hparams.pop('_instantiator')
-    sent_mod = SentModule(**hparams)
-    sent_mod.load_state_dict(ckpt['state_dict'])
-    sent_mod.eval()
+    sent_mod = load_module(args.ckpt)
+    assert isinstance(sent_mod, SentModule)
     assert sent_mod.stance_enum is TriStance
+    sent_mod.eval()
 
     hf_dataset = load_dataset("SetFit/sst5")
     label_map = {"very positive": TriStance.favor,
