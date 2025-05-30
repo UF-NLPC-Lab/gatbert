@@ -1,4 +1,5 @@
-from typing import Optional
+from __future__ import annotations
+from typing import Optional, List
 import dataclasses
 # 3rd Party
 import torch
@@ -42,7 +43,7 @@ class SentModule(StanceModule):
         self.register_buffer("att_scale", torch.sqrt(torch.tensor(self.hidden_size)), persistent=False)
 
     @property
-    def encoder(self):
+    def encoder(self) -> SentModule.Encoder:
         return self.__encoder
 
     @dataclasses.dataclass
@@ -83,6 +84,12 @@ class SentModule(StanceModule):
             if labels is not None:
                 labels = torch.nn.functional.one_hot(labels, num_classes=len(self.stance_enum)).to(torch.float)
                 loss = self.loss_func(stance_prob, labels)
+        elif context_mask is not None:
+            # Compute a uniform average over the sentiment
+            masked_states = token_sents * torch.unsqueeze(context_mask, dim=-1)
+            summed = torch.sum(masked_states, dim=1)
+            n_tokens = torch.sum(context_mask, dim=-1, keepdim=True)
+            stance_prob = summed / n_tokens
 
         return SentModule.Output(token_sents=token_sents,
                                  stance_prob=stance_prob,
@@ -99,6 +106,17 @@ class SentModule(StanceModule):
     class Encoder(Encoder):
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.tokenizer = tokenizer
+
+        def encode_sentiment(self, text: List[str], label: int):
+            encoding = self.tokenizer(text=text, return_special_tokens_mask=True, return_tensors='pt')
+            encoding['token_type_ids'] = torch.ones_like(encoding['input_ids'])
+            special_tokens_mask = encoding.pop('special_tokens_mask')
+            context_mask = torch.logical_not(special_tokens_mask)
+            return {
+                "context": encoding,
+                "context_mask": context_mask,
+                "labels": torch.tensor(label)
+            }
 
         def encode(self, sample: Sample):
 
