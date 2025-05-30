@@ -29,7 +29,7 @@ def main(raw_args=None):
                  "negative": TriStance.against,
                  "very negative": TriStance.against}
     encoded = []
-    for sample in hf_dataset['train']:
+    for sample in hf_dataset['test']:
         encoded.append(sent_mod.encoder.encode_sentiment(sample['text'], label_map[sample['label_text']]))
     sent_dataset = MapDataset(encoded)
     sent_dataloader = DataLoader(sent_dataset,
