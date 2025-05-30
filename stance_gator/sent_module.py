@@ -52,6 +52,7 @@ class SentModule(StanceModule):
         stance_prob: Optional[torch.Tensor] = None
         attention: Optional[torch.Tensor] = None
         loss: Optional[torch.Tensor] = None
+        hidden_states: Optional[torch.Tensor] = None
 
 
     def predict_sent(self, context, context_mask):
@@ -65,7 +66,7 @@ class SentModule(StanceModule):
         prob_dist = summed / n_tokens
         return prob_dist
 
-    def forward(self, context, target=None, context_mask=None, labels=None):
+    def forward(self, context, target=None, context_mask=None, labels=None, return_hidden_states=False):
         context_output = self.bert(**context)
         context_hidden_states = context_output.last_hidden_state
         token_sents = self.sent_classifier(context_hidden_states)
@@ -94,7 +95,8 @@ class SentModule(StanceModule):
         return SentModule.Output(token_sents=token_sents,
                                  stance_prob=stance_prob,
                                  attention=attention,
-                                 loss=loss)
+                                 loss=loss,
+                                 hidden_states=context_hidden_states if return_hidden_states else None)
 
     def _eval_step(self, batch, batch_idx):
         labels = batch.pop('labels').view(-1)
