@@ -55,10 +55,7 @@ class StanceModule(L.LightningModule):
         for class_name in self.stance_enum.label2id():
             k = f'{class_name}_f1'
             self.log(f'{prefix}_{k}', calc.results[k])
-
-        for k in ["neutral_precision", "neutral_recall"]:
-            self.log(f'{prefix}_{k}', calc.results[k])
-
+        self.log(f'{prefix}_micro_f1', calc.results['micro_f1'])
         self.log(f'{prefix}_macro_f1', calc.results['macro_f1'])
         calc.reset()
 
