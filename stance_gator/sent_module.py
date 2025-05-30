@@ -53,6 +53,7 @@ class SentModule(StanceModule):
         attention: Optional[torch.Tensor] = None
         loss: Optional[torch.Tensor] = None
         hidden_states: Optional[torch.Tensor] = None
+        summands: Optional[torch.Tensor] = None
 
 
     def predict_sent(self, context, context_mask):
@@ -74,6 +75,7 @@ class SentModule(StanceModule):
         loss = None
         attention = None
         stance_prob = None
+        summands = None
         if target is not None and context_mask is not None:
             target_output = self.bert(**target)
             target_features = target_output.last_hidden_state[:, 0]
@@ -81,22 +83,18 @@ class SentModule(StanceModule):
             attention_logits = attention_logits + torch.where(context_mask, 0, -torch.inf)
             attention = torch.softmax(attention_logits, dim=-1)
 
-            stance_prob = torch.sum(torch.unsqueeze(attention, dim=-1) * token_sents, dim=-2)
+            summands = torch.unsqueeze(attention, dim=-1) * token_sents
+            stance_prob = torch.sum(summands, dim=-2)
             if labels is not None:
                 labels = torch.nn.functional.one_hot(labels, num_classes=len(self.stance_enum)).to(torch.float)
                 loss = self.loss_func(stance_prob, labels)
-        elif context_mask is not None:
-            # Compute a uniform average over the sentiment
-            masked_states = token_sents * torch.unsqueeze(context_mask, dim=-1)
-            summed = torch.sum(masked_states, dim=1)
-            n_tokens = torch.sum(context_mask, dim=-1, keepdim=True)
-            stance_prob = summed / n_tokens
 
         return SentModule.Output(token_sents=token_sents,
                                  stance_prob=stance_prob,
                                  attention=attention,
                                  loss=loss,
-                                 hidden_states=context_hidden_states if return_hidden_states else None)
+                                 hidden_states=context_hidden_states if return_hidden_states else None,
+                                 summands=summands)
 
     def _eval_step(self, batch, batch_idx):
         labels = batch.pop('labels').view(-1)
