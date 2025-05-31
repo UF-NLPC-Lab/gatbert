@@ -64,8 +64,7 @@ class SpanModule(StanceModule):
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
-        two_pass = self.current_epoch >= self.warmup_epochs
-        output_obj: SpanModule.Output = self(**batch, two_pass=two_pass)
+        output_obj: SpanModule.Output = self(**batch)
 
         first_pass = output_obj.first_pass
         ce_first = torch.nn.functional.cross_entropy(first_pass.logits, labels)
@@ -95,7 +94,7 @@ class SpanModule(StanceModule):
         return loss
 
     def forward(self, **batch):
-        two_pass = batch.pop('two_pass', False)
+        two_pass = batch.pop('two_pass', self.current_epoch >= self.warmup_epochs)
         context_mask = batch.pop('context_mask')
 
         first_pass_out = self.wrapped(**batch)
