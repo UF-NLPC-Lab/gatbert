@@ -33,13 +33,15 @@ class SpanModule(StanceModule):
                  classifier_hidden_units: Optional[int] = None,
                  max_context_length: int =256,
                  max_target_length: int =64,
-                 warmup_epochs: int = 1,
+                 warmup_epochs: int = 0,
+                 ce_weight: float = 1e-5,
                  span_weight: float = 1e-3,
                  **parent_kwargs,
                  ):
         super().__init__(**parent_kwargs)
         self.save_hyperparameters()
         self.warmup_epochs = warmup_epochs
+        self.ce_weight = ce_weight
         self.span_weight = span_weight
         config = BertForStanceConfig.from_pretrained(pretrained_model,
                                                      classifier_hidden_units=classifier_hidden_units,
@@ -58,50 +60,42 @@ class SpanModule(StanceModule):
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, 2, bias=True),
 
-            # torch.nn.Linear(hidden_size, 1, bias=True),
-            # torch.nn.Flatten(start_dim=-2),
-            # torch.nn.Sigmoid()
         )
-
-    def configure_optimizers(self):
-        optimizer_bert = torch.optim.Adam(self.wrapped.parameters(), lr=4e-5)
-        optimizer_span = torch.optim.Adam(self.span_ffn.parameters(), lr=1e-3)
-        return optimizer_bert, optimizer_span
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
-        # optimizer_bert, optimizer_span = self.optimizers()
-        optimizer_bert = self.optimizers()
-
         two_pass = self.current_epoch >= self.warmup_epochs
-        output_obj: SpanModule.Output = self(batch, two_pass=two_pass)
+        output_obj: SpanModule.Output = self(**batch, two_pass=two_pass)
 
         first_pass = output_obj.first_pass
         ce_first = torch.nn.functional.cross_entropy(first_pass.logits, labels)
-        self.log('loss/ce/first', ce_first)
+        self.log('ce_first', ce_first)
 
         if output_obj.second_pass is not None:
             second_pass = output_obj.second_pass
-            ce_second = torch.nn.functional.cross_entropy(second_pass.logits, labels)
-            self.log('loss/ce/second', ce_second)
+            ce_second_vals = torch.nn.functional.cross_entropy(second_pass.logits, labels, reduction='mean')
+            self.log('ce_second', torch.mean(ce_second_vals))
 
-            loss_diff = ce_second_values - ce_first_values
-            seq_lens = output_obj.stop_inds - output_obj.start_inds
+            seq_lens = torch.nn.functional.relu(output_obj.stop_inds - output_obj.start_inds).to(ce_second_vals.dtype)
+            self.log('mean_seq_len', torch.mean(seq_lens))
 
-            start_log_probs = torch.nn.functional.log_softmax(output_obj.start_logits)[:, output_obj.start_inds]
-            stop_log_probs = torch.nn.functional.log_softmax(output_obj.stop_logits)[:, output_obj.stop_inds]
+            start_log_probs = torch.nn.functional.log_softmax(output_obj.start_logits, dim=-1)[:, output_obj.start_inds]
+            stop_log_probs = torch.nn.functional.log_softmax(output_obj.stop_logits, dim=-1)[:, output_obj.stop_inds]
             log_probs = (start_log_probs + stop_log_probs) / 2
+            self.log('mean_log_prob', torch.mean(log_probs))
 
-            ce_second = second_pass.loss
-            self.log('loss/ce/second', ce_second)
+            rl_loss = -log_probs * (self.ce_weight * ce_second_vals + self.span_weight * seq_lens)
+            rl_loss = torch.mean(rl_loss)
+            self.log("rl_loss", rl_loss)
+            loss = ce_first + rl_loss
+        else:
+            loss = ce_first
 
-            total_ce = ce_first + ce_second
-            self.manual_backward(total_ce)
-            optimizer_bert.step()
+        self.log('loss', loss)
+        return loss
 
-            pass
-
-    def forward(self, batch, two_pass = True):
+    def forward(self, **batch):
+        two_pass = batch.pop('two_pass', False)
         context_mask = batch.pop('context_mask')
 
         first_pass_out = self.wrapped(**batch)
@@ -125,7 +119,8 @@ class SpanModule(StanceModule):
 
             seq_inds = torch.arange(0, context_mask.shape[1], device=context_mask.device)
             seq_inds = torch.unsqueeze(seq_inds, 0)
-            within_range = torch.logical_or(start_inds <= seq_inds, seq_inds <= stop_inds)
+            within_range = torch.logical_or(torch.unsqueeze(start_inds, -1) <= seq_inds,
+                                            seq_inds <= torch.unsqueeze(stop_inds, -1) )
             # We && with the context_mask because we only want to add masks for context tokens, not [SEP] or target tokens
 
             old_att_mask = batch['attention_mask']
@@ -136,7 +131,7 @@ class SpanModule(StanceModule):
             new_batch = copy.copy(batch)
             new_batch['attention_mask'] = new_att_mask
 
-        second_pass_out = self.wrapped(new_batch)
+        second_pass_out = self.wrapped(**new_batch)
         return SpanModule.Output(first_pass=first_pass_out,
                                  second_pass=second_pass_out,
                                  start_logits=start_logits,
