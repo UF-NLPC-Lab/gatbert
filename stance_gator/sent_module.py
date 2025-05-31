@@ -11,9 +11,17 @@ from .base_module import StanceModule
 from .constants import DEFAULT_MODEL, TriStance
 from .encoder import Encoder, keyed_scalar_stack, collate_ids, keyed_pad
 
+class Lambda(torch.nn.Module):
+    def __init__(self, f):
+        super().__init__()
+        self.f = f
+    def forward(self, x):
+        return self.f(x)
+
 class SentModule(StanceModule):
     def __init__(self,
-                pretrained_model = DEFAULT_MODEL,
+                pretrained_model: str = DEFAULT_MODEL,
+                sent_temperature: float = 1.,
                 **parent_kwargs
                 ):
         super().__init__(**parent_kwargs)
@@ -32,6 +40,7 @@ class SentModule(StanceModule):
             torch.nn.Linear(feature_size, feature_size, bias=True),
             torch.nn.ReLU(),
             torch.nn.Linear(feature_size, len(self.stance_enum), bias=True),
+            Lambda(lambda x: x / sent_temperature),
             torch.nn.Softmax(dim=-1)
         )
 
