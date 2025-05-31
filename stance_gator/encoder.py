@@ -94,6 +94,10 @@ def collate_ids(tokenizer: PreTrainedTokenizerFast,
         rdict['position_ids'] = keyed_pad(samples, 'position_ids')
     if 'token_type_ids' in samples[0]:
         rdict['token_type_ids'] = keyed_pad(samples, 'token_type_ids', padding_value=tokenizer.pad_token_type_id)
+    if 'context_text_mask' in samples[0]:
+        rdict['context_text_mask'] = keyed_pad(samples, 'context_text_mask', padding_value=False)
+    if 'target_text_mask' in samples[0]:
+        rdict['target_text_mask'] = keyed_pad(samples, 'target_text_mask', padding_value=False)
     return rdict
 
 def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:
