@@ -1,4 +1,5 @@
 # STL
+from __future__ import annotations
 import copy
 from typing import Optional
 import dataclasses
@@ -180,7 +181,7 @@ class SpanModule(StanceModule):
                                  stop_inds=stop_inds)
 
     @property
-    def encoder(self):
+    def encoder(self) -> SpanModule.Encoder:
         return self.__encoder
 
     class Encoder(SimpleEncoder):

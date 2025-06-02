@@ -28,6 +28,11 @@ class SimpleEncoder(Encoder):
         self.__tokenizer = tokenizer
         self.max_context_length = max_context_length
         self.max_target_length = max_target_length
+
+    @property
+    def tokenizer(self):
+        return self.__tokenizer
+
     def encode(self, sample: Sample):
         rdict = encode_text(self.__tokenizer, sample, max_context_length=self.max_context_length, max_target_length=self.max_target_length)
         if sample.stance is not None:
@@ -57,7 +62,6 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
     target_trunc = tokenizer.decode(tokenizer.encode(sample.target, max_length=max_target_length, add_special_tokens=False), **tokenizer_kwargs)
     combined = tokenizer(text=context_trunc, text_pair=target_trunc, return_tensors='pt', return_special_tokens_mask=True)
     return combined
-
 
 def get_text_masks(special_tokens_mask):
     special_inds = torch.where(special_tokens_mask)[-1]
