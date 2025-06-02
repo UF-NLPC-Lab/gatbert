@@ -32,16 +32,16 @@ class StanceModule(L.LightningModule):
         self.log("loss", loss)
         return loss
     def validation_step(self, batch, batch_idx):
-        self._eval_step(batch, batch_idx)
+        self._eval_step(batch, batch_idx, 'val')
     def test_step(self, batch, batch_idx):
-        self._eval_step(batch, batch_idx)
+        self._eval_step(batch, batch_idx, 'test')
     def on_validation_epoch_end(self):
         self.__eval_finish('val')
     def on_test_epoch_end(self):
         self.__eval_finish('test')
 
 
-    def _eval_step(self, batch, batch_idx):
+    def _eval_step(self, batch, batch_idx, stage):
         labels = batch.pop('labels').view(-1)
         rval = self(**batch)
         logits = typing.cast(StanceOutput, rval).logits

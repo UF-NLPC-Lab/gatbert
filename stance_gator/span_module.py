@@ -2,6 +2,7 @@
 import copy
 from typing import Optional
 import dataclasses
+import typing
 # 3rd Party
 import torch
 from transformers import BertTokenizerFast
@@ -64,6 +65,23 @@ class SpanModule(StanceModule):
     @property
     def _greedy(self):
         return not self.training
+
+    def _eval_step(self, batch, batch_idx, stage):
+        orig_lens = torch.sum(batch['context_mask'], dim=-1)
+
+        labels = batch.pop('labels').view(-1)
+        rval: SpanModule.Output = self(**batch)
+        logits = rval.logits
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        self._calc.record(probs, labels)
+
+        seq_lens = torch.nn.functional.relu(rval.stop_inds - rval.start_inds + 1).to(logits.dtype)
+        self.log(f"{stage}_seqlen", torch.mean(seq_lens), batch_size=seq_lens.numel(), on_epoch=True)
+
+        seq_reduction = (orig_lens - seq_lens) / orig_lens
+        self.log(f"{stage}_seqreduction", torch.mean(seq_reduction), batch_size=seq_reduction.numel(), on_epoch=True)
+
+
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
