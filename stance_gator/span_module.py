@@ -62,6 +62,10 @@ class SpanModule(StanceModule):
 
         )
 
+    @property
+    def _greedy(self):
+        return False
+
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
         output_obj: SpanModule.Output = self(**batch)
@@ -72,14 +76,19 @@ class SpanModule(StanceModule):
 
         if output_obj.second_pass is not None:
             second_pass = output_obj.second_pass
-            ce_second_vals = torch.nn.functional.cross_entropy(second_pass.logits, labels, reduction='mean')
+            ce_second_vals = torch.nn.functional.cross_entropy(second_pass.logits, labels, reduction='none')
             self.log('ce_second', torch.mean(ce_second_vals))
 
             seq_lens = torch.nn.functional.relu(output_obj.stop_inds - output_obj.start_inds).to(ce_second_vals.dtype)
             self.log('mean_seq_len', torch.mean(seq_lens))
 
-            start_log_probs = torch.nn.functional.log_softmax(output_obj.start_logits, dim=-1)[:, output_obj.start_inds]
-            stop_log_probs = torch.nn.functional.log_softmax(output_obj.stop_logits, dim=-1)[:, output_obj.stop_inds]
+            start_log_probs = torch.nn.functional.log_softmax(output_obj.start_logits, dim=-1)
+            stop_log_probs = torch.nn.functional.log_softmax(output_obj.stop_logits, dim=-1)
+            start_log_probs = torch.gather(start_log_probs, dim=-1, index=torch.unsqueeze(output_obj.start_inds, -1))
+            stop_log_probs = torch.gather(stop_log_probs, dim=-1, index=torch.unsqueeze(output_obj.stop_inds, -1))
+            start_log_probs = torch.squeeze(start_log_probs, -1)
+            stop_log_probs = torch.squeeze(stop_log_probs, -1)
+
             log_probs = (start_log_probs + stop_log_probs) / 2
             self.log('mean_log_prob', torch.mean(log_probs))
 
@@ -112,9 +121,16 @@ class SpanModule(StanceModule):
 
         # Prepare the spans for the second pass
         with torch.no_grad():
-            # TODO: Sample by probability instead of taking the maximum?
-            start_inds = torch.argmax(start_logits, dim=-1)
-            stop_inds = torch.argmax(stop_logits, dim=-1)
+
+            if self._greedy:
+                start_inds = torch.argmax(start_logits, dim=-1)
+                stop_inds = torch.argmax(stop_logits, dim=-1)
+            else:
+                start_dist = torch.distributions.Categorical(logits=start_logits)
+                stop_dist = torch.distributions.Categorical(logits=stop_logits)
+                start_inds = start_dist.sample()
+                stop_inds = stop_dist.sample()
+
 
             seq_inds = torch.arange(0, context_mask.shape[1], device=context_mask.device)
             seq_inds = torch.unsqueeze(seq_inds, 0)
