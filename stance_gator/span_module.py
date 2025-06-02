@@ -30,10 +30,10 @@ class SpanModule(StanceModule):
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
                  classifier_hidden_units: Optional[int] = None,
-                 max_context_length: int =256,
-                 max_target_length: int =64,
+                 max_context_length: int = 256,
+                 max_target_length: int = 64,
                  warmup_epochs: int = 0,
-                 ce_weight: float = 1e-5,
+                 ce_weight: float = 1e-3,
                  span_weight: float = 1e-3,
                  **parent_kwargs,
                  ):
@@ -63,7 +63,7 @@ class SpanModule(StanceModule):
 
     @property
     def _greedy(self):
-        return False
+        return not self.training
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
@@ -71,15 +71,15 @@ class SpanModule(StanceModule):
 
         first_pass = output_obj.first_pass
         ce_first = torch.nn.functional.cross_entropy(first_pass.logits, labels)
-        self.log('ce_first', ce_first)
+        self.log('train_ce_first', ce_first)
 
         if output_obj.second_pass is not None:
             second_pass = output_obj.second_pass
             ce_second_vals = torch.nn.functional.cross_entropy(second_pass.logits, labels, reduction='none')
-            self.log('ce_second', torch.mean(ce_second_vals))
+            self.log('train_ce_second', torch.mean(ce_second_vals))
 
-            seq_lens = torch.nn.functional.relu(output_obj.stop_inds - output_obj.start_inds).to(ce_second_vals.dtype)
-            self.log('mean_seq_len', torch.mean(seq_lens))
+            seq_lens = torch.nn.functional.relu(output_obj.stop_inds - output_obj.start_inds + 1).to(ce_second_vals.dtype)
+            self.log('train_seqlen', torch.mean(seq_lens))
 
             start_log_probs = torch.nn.functional.log_softmax(output_obj.start_logits, dim=-1)
             stop_log_probs = torch.nn.functional.log_softmax(output_obj.stop_logits, dim=-1)
@@ -89,16 +89,16 @@ class SpanModule(StanceModule):
             stop_log_probs = torch.squeeze(stop_log_probs, -1)
 
             log_probs = (start_log_probs + stop_log_probs) / 2
-            self.log('mean_log_prob', torch.mean(log_probs))
+            self.log('train_span_logprob', torch.mean(log_probs))
 
             rl_loss = -log_probs * (self.ce_weight * ce_second_vals + self.span_weight * seq_lens)
             rl_loss = torch.mean(rl_loss)
-            self.log("rl_loss", rl_loss)
+            self.log("train_rl_loss", rl_loss)
             loss = ce_first + rl_loss
         else:
             loss = ce_first
 
-        self.log('loss', loss)
+        self.log('train_loss', loss)
         return loss
 
     def forward(self, **batch):
