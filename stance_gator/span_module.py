@@ -4,7 +4,6 @@ from typing import Optional
 import dataclasses
 # 3rd Party
 import torch
-from torch.distributions import Categorical
 from transformers import BertTokenizerFast
 from transformers.utils.generic import ModelOutput
 # Local
@@ -134,7 +133,7 @@ class SpanModule(StanceModule):
 
             seq_inds = torch.arange(0, context_mask.shape[1], device=context_mask.device)
             seq_inds = torch.unsqueeze(seq_inds, 0)
-            within_range = torch.logical_or(torch.unsqueeze(start_inds, -1) <= seq_inds,
+            within_range = torch.logical_and(torch.unsqueeze(start_inds, -1) <= seq_inds,
                                             seq_inds <= torch.unsqueeze(stop_inds, -1) )
             # We && with the context_mask because we only want to add masks for context tokens, not [SEP] or target tokens
 
