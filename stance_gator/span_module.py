@@ -36,6 +36,7 @@ class SpanModule(StanceModule):
                  warmup_epochs: int = 0,
                  ce_weight: float = 1e-3,
                  span_weight: float = 1e-3,
+                 target_length: Optional[int] = None,
                  **parent_kwargs,
                  ):
         super().__init__(**parent_kwargs)
@@ -43,6 +44,7 @@ class SpanModule(StanceModule):
         self.warmup_epochs = warmup_epochs
         self.ce_weight = ce_weight
         self.span_weight = span_weight
+        self.target_length = target_length
         config = BertForStanceConfig.from_pretrained(pretrained_model,
                                                      classifier_hidden_units=classifier_hidden_units,
                                                      id2label=self.stance_enum.id2label(),
@@ -64,7 +66,8 @@ class SpanModule(StanceModule):
 
     @property
     def _greedy(self):
-        return not self.training
+        return False
+        # return not self.training
 
     def _eval_step(self, batch, batch_idx, stage):
         orig_lens = torch.sum(batch['context_mask'], dim=-1)
@@ -109,7 +112,12 @@ class SpanModule(StanceModule):
             log_probs = (start_log_probs + stop_log_probs) / 2
             self.log('train_span_logprob', torch.mean(log_probs))
 
-            rl_loss = -log_probs * (self.ce_weight * ce_second_vals + self.span_weight * seq_lens)
+            if self.target_length is not None:
+                span_reward = -torch.abs(seq_lens - self.target_length)
+            else:
+                span_reward = -seq_lens
+
+            rl_loss = -log_probs * (self.ce_weight * ce_second_vals + self.span_weight * span_reward)
             rl_loss = torch.mean(rl_loss)
             self.log("train_rl_loss", rl_loss)
             loss = ce_first + rl_loss
