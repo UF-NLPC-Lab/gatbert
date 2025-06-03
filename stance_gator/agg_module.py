@@ -175,7 +175,7 @@ class AggModule(StanceModule):
             self.tokenizer = tokenizer
             self.special_ids = set(self.tokenizer.all_special_ids)
 
-            self.colors = ["yellow", "fuschia", "lime", "aqua"]
+            self.colors = ["yellow", "fuchsia", "lime", "aqua"]
 
             self.html_tokens = []
 
@@ -229,7 +229,8 @@ class AggModule(StanceModule):
                 if self.prefix_len is None:
                     self.prefix_len = self.get_prefix_length(id_list)
                 parent_ids = batch['parent'].tolist()
-                context_toks = []
+                context_spans = []
+                color_index = 0
                 while subsample_idx < len(parent_ids) and parent_ids[subsample_idx] == sample_idx:
                     subsample_ids = batch['sub']['input_ids'][subsample_idx].cpu().tolist()
                     i = 0
@@ -239,10 +240,16 @@ class AggModule(StanceModule):
                     while i < len(subsample_ids) and subsample_ids[i] not in special_ids:
                         i += 1
                     context_end = i
-                    decoded = tokenizer.decode(subsample_ids[context_start:context_end])
-                    context_toks.append(decoded)
+                    decoded = html.escape(tokenizer.decode(subsample_ids[context_start:context_end]))
+
+                    highlighted = f'<span style="background-color:{self.colors[color_index]}">{decoded}</span>'
+
+                    context_spans.append(highlighted)
                     subsample_idx += 1
-                context_str = html.escape("".join(context_toks))
+                    color_index = (color_index + 1) % len(self.colors)
+
+
+                context_str = "".join(context_spans)
                 self.html_tokens.append(f'<p> <strong>Context</strong>: {context_str} </p>')
 
 
