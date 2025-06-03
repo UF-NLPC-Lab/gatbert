@@ -15,7 +15,7 @@ class StanceCorpus:
     def __init__(self,
                  path: pathlib.Path,
                  corpus_type: CorpusType,
-                 data_ratio:  Tuple[float, float, float]):
+                 data_ratio:  Tuple[float, float, float] = (0., 0., 1.)):
         if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         self.parse_fn = CORPUS_PARSERS[corpus_type]
@@ -32,24 +32,11 @@ class StanceDataModule(L.LightningDataModule):
         # Has to be set explicitly (see fit_and_test.py for an example)
         self.encoder: Encoder = None
         self.batch_size = batch_size
-        self._data: Dict[str, MapDataset] = {}
         self._corpora = corpora
         self.__train_ds: Dataset = None
         self.__val_ds: Dataset = None
         self.__test_ds: Dataset = None
 
-
-    @property
-    def _collate_fn(self):
-        return self.encoder.collate
-
-    # Protected Methods
-    def _make_train_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self._collate_fn, shuffle=True)
-    def _make_val_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self._collate_fn)
-    def _make_test_loader(self, dataset: Dataset):
-        return DataLoader(dataset, batch_size=self.batch_size, collate_fn=self._collate_fn)
 
     def setup(self, stage):
         if self.__train_ds and self.__val_ds and self.__test_ds:
@@ -71,8 +58,8 @@ class StanceDataModule(L.LightningDataModule):
         self.__test_ds = ConcatDataset(test_dses)
 
     def train_dataloader(self):
-        return self._make_train_loader(self.__train_ds)
+        return DataLoader(self.__train_ds, batch_size=self.batch_size, collate_fn=self.encoder.collate, shuffle=True)
     def val_dataloader(self):
-        return self._make_val_loader(self.__val_ds)
+        return DataLoader(self.__val_ds, batch_size=self.batch_size, collate_fn=self.encoder.collate)
     def test_dataloader(self):
-        return self._make_test_loader(self.__test_ds)
+        return DataLoader(self.__test_ds, batch_size=self.batch_size, collate_fn=self.encoder.collate)
