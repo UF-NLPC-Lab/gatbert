@@ -25,6 +25,7 @@ class AggModule(StanceModule):
     class Output:
         full_logits: torch.Tensor
         agg_logits: torch.Tensor
+        sub_logits: torch.Tensor
 
         @property
         def logits(self):
@@ -91,7 +92,8 @@ class AggModule(StanceModule):
         agg_probs = torch_scatter.scatter(sub_probs, parent, dim=-2, reduce='mean')
         agg_log = torch.log(agg_probs) # TODO: Do something more numerically stable
         return AggModule.Output(full_logits=full_pass.logits,
-                                agg_logits=agg_log)
+                                agg_logits=agg_log,
+                                sub_logits=sub_pass.logits)
     @property
     def encoder(self) -> AggModule.Encoder:
         return self.__encoder
@@ -181,6 +183,7 @@ class AggModule(StanceModule):
 
             self.prefix_len = None
 
+
         def get_prefix_length(self, ids):
             i = 0
             while i < len(ids) and ids[i] in self.special_ids:
@@ -199,10 +202,19 @@ class AggModule(StanceModule):
                                  batch_idx,
                                  dataloader_idx = 0):
 
+            stance_enum = pl_module.stance_enum
+
+            condprob_template = "[" + ','.join([f"P({s.name} |" + "{context})" for s in stance_enum]) + "] = {probs}"
+
+            # fullprob_template =   "[" + ','.join([f"P({s.name} | Full Text)" for s in stance_enum]) + "]"
+            # aggprob_template =    "[" + ','.join([f"P({s.name} | Aggregated)" for s in stance_enum]) + "]"
+
             special_ids = self.special_ids
             tokenizer = self.tokenizer
 
-            labels = batch['labels']
+            fullprobs = torch.nn.functional.softmax(outputs.full_logits, dim=-1).cpu().tolist()
+            aggprobs = torch.nn.functional.softmax(outputs.agg_logits, dim=-1).cpu().tolist()
+            subprobs = torch.nn.functional.softmax(outputs.sub_logits, dim=-1).cpu().tolist()
 
             batch_size = batch['full']['input_ids'].shape[0]
             subsample_idx = 0
@@ -221,15 +233,20 @@ class AggModule(StanceModule):
                 target_str = html.escape(tokenizer.decode(target_ids))
                 self.html_tokens.append(f'<p> <strong>Target</strong>: {target_str} </p>')
 
-                # Convert to a negative index so we can count from the back
-                # for shorter samples
-                context_end = -(len(id_list) - target_start) - 1
-
-
                 if self.prefix_len is None:
                     self.prefix_len = self.get_prefix_length(id_list)
                 parent_ids = batch['parent'].tolist()
                 context_spans = []
+
+                table_toks = []
+                make_prob_cells = lambda probs: "".join([f"<td>{prob:.3f}</td>" for prob in probs])
+                table_toks.append("<table>")
+                table_toks.append("<thead><tr><th>Source</th>")
+                for s in stance_enum:
+                    table_toks.append(f"<th>{s.name}</th>")
+                table_toks.append("</tr></thead><tbody>")
+
+
                 color_index = 0
                 while subsample_idx < len(parent_ids) and parent_ids[subsample_idx] == sample_idx:
                     subsample_ids = batch['sub']['input_ids'][subsample_idx].cpu().tolist()
@@ -240,17 +257,28 @@ class AggModule(StanceModule):
                     while i < len(subsample_ids) and subsample_ids[i] not in special_ids:
                         i += 1
                     context_end = i
-                    decoded = html.escape(tokenizer.decode(subsample_ids[context_start:context_end]))
+                    decoded = tokenizer.decode(subsample_ids[context_start:context_end])
 
-                    highlighted = f'<span style="background-color:{self.colors[color_index]}">{decoded}</span>'
+                    color = self.colors[color_index]
+                    highlighted = f'<span style="background-color:{color}">{html.escape(decoded)}</span>'
+
+                    table_toks.append("<tr>")
+                    table_toks.append(f'<td style="background-color:{color}">{html.escape(decoded[:15])}&hellip;</td> ')
+                    table_toks.append(make_prob_cells(subprobs[subsample_idx]))
+                    table_toks.append("</tr>")
+
 
                     context_spans.append(highlighted)
                     subsample_idx += 1
                     color_index = (color_index + 1) % len(self.colors)
 
-
                 context_str = "".join(context_spans)
+                table_toks.append(f"<tr><td>Full Context</td>{make_prob_cells(fullprobs[sample_idx])}")
+                table_toks.append(f"<tr><td>Recombined  </td>{make_prob_cells( aggprobs[sample_idx])}")
+                table_toks.append("</tbody></table>")
+
                 self.html_tokens.append(f'<p> <strong>Context</strong>: {context_str} </p>')
+                self.html_tokens.extend(table_toks)
 
 
 
