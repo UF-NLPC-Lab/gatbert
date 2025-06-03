@@ -2,10 +2,13 @@
 from __future__ import annotations
 from typing import Optional, Literal, List
 import dataclasses
+import pathlib
 # 3rd Party
+from lightning.pytorch.callbacks import Callback
 import torch_scatter
 import torch
 from transformers import BertTokenizerFast, PreTrainedTokenizerFast
+from IPython.display import display, HTML
 # Local
 from .types import TensorDict
 from .data import SPACY_PIPES
@@ -92,6 +95,9 @@ class AggModule(StanceModule):
     def encoder(self) -> AggModule.Encoder:
         return self.__encoder
 
+    def make_visualizer(self, output_dir):
+        return AggModule.Visualizer(output_dir, self.tokenizer)
+
     class Encoder(Encoder):
         def __init__(self, tokenizer: PreTrainedTokenizerFast):
             self.tokenizer = tokenizer
@@ -160,4 +166,57 @@ class AggModule(StanceModule):
     def feature_size(self) -> int:
         return self.wrapped.config.hidden_size
         
+    class Visualizer(Callback):
+        def __init__(self,
+                     out_dir: pathlib.Path,
+                     tokenizer: PreTrainedTokenizerFast):
+            self.out_dir = pathlib.Path(out_dir)
+            self.tokenizer = tokenizer
+            self.special_ids = set(self.tokenizer.all_special_ids)
 
+            self.colors = ["yellow", "fuschia", "lime", "aqua"]
+
+            self.html_tokens = []
+
+        def on_predict_epoch_start(self, trainer, pl_module):
+            self.html_tokens.clear()
+            self.html_tokens.append("<html><body>")
+
+        def on_predict_batch_end(self,
+                                 trainer,
+                                 pl_module: AggModule,
+                                 outputs: AggModule.Output,
+                                 batch,
+                                 batch_idx,
+                                 dataloader_idx = 0):
+
+            special_ids = self.special_ids
+            tokenizer = self.tokenizer
+
+            labels = batch['labels']
+
+            batch_size = batch['full']['input_ids'].shape[0]
+            for sample_idx in range(batch_size):
+                id_list = batch['full']['input_ids'][sample_idx].cpu().tolist()
+                i = len(id_list) - 1
+                while i >= 0 and id_list[i] in special_ids:
+                    i -= 1
+                target_end = i + 1
+                while i >= 0 and id_list[i] not in special_ids:
+                    i -= 1
+                target_start = i + 1
+
+                target_ids = id_list[target_start:target_end]
+                target_str = tokenizer.decode(target_ids)
+
+
+                self.html_tokens.append(f'<p> <strong>Target</strong>: {target_str} </p>')
+
+        def on_predict_epoch_end(self, trainer, pl_module):
+            self.html_tokens.append("</body></html>")
+            html_str = "".join(self.html_tokens)
+            with open(self.out_dir / f"highlights.html", 'w') as w:
+                w.write(html_str)
+
+        def viz_batch(self, batch: AggModule.Output, metabatch):
+            return super().viz_batch(batch, metabatch)

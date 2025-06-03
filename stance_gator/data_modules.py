@@ -6,30 +6,71 @@ import lightning as L
 from tqdm import tqdm
 import pathlib
 # Local
-from typing import Dict, Tuple, List, Tuple
+from typing import Any, Tuple, List, Tuple
 from .encoder import Encoder
 from .data import MapDataset, CORPUS_PARSERS, CorpusType
 from .constants import DEFAULT_BATCH_SIZE
+from .utils import batched
 
 class StanceCorpus:
     def __init__(self,
                  path: pathlib.Path,
-                 corpus_type: CorpusType,
-                 data_ratio:  Tuple[float, float, float] = (0., 0., 1.)):
+                 corpus_type: CorpusType):
         if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         self.parse_fn = CORPUS_PARSERS[corpus_type]
-        self.data_ratio = data_ratio
         self.path = path
 
+class SplitCorpus(StanceCorpus):
+    def __init__(self,
+                 path: pathlib.Path,
+                 corpus_type: CorpusType,
+                 data_ratio:  Tuple[float, float, float]):
+        super().__init__(path=path, corpus_type=corpus_type)
+        self.data_ratio = data_ratio
+
+
+class VizDataModule(L.LightningDataModule):
+    def __init__(self, corpus: StanceCorpus, batch_size: int = DEFAULT_BATCH_SIZE):
+        super().__init__()
+        self.save_hyperparameters()
+        self.corpus = corpus
+        self.encoder: Encoder = None
+        self.batch_size = batch_size
+
+        self.__ds: Dataset = None
+        self.__meta: List[Any] = None
+    def setup(self, stage):
+        if self.__ds is not None:
+            return
+        corpus = self.corpus
+        parse_iter = tqdm(corpus.parse_fn(corpus.path), desc=f'Parsing {corpus.path}')
+
+        encodings = []
+        metadatas = []
+
+        for sample in parse_iter:
+            encoding, metadata = self.encoder.encode_with_meta(sample)
+            encodings.append(encoding)
+            metadatas.append(metadata)
+        self.__ds = MapDataset(encodings)
+        self.__meta = metadatas
+
+    def predict_dataloader(self):
+        return DataLoader(self.__ds,
+                          batch_size=self.batch_size,
+                          collate_fn=self.encoder.collate,
+                          shuffle=False)
+    def predict_metadata(self):
+        return list(batched(self.__meta, self.batch_size))
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,
-                 corpora: List[StanceCorpus],
+                 corpora: List[SplitCorpus],
                  batch_size: int = DEFAULT_BATCH_SIZE
                 ):
         super().__init__()
-        # Has to be set explicitly (see fit_and_test.py for an example)
+        # Has to be set explicitly (see cli.py for an example)
         self.encoder: Encoder = None
         self.batch_size = batch_size
         self._corpora = corpora

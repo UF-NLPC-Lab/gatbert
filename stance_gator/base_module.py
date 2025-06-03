@@ -2,7 +2,9 @@ import abc
 # 3rd Party
 import torch
 import lightning as L
+from lightning.pytorch.callbacks import Callback
 import typing
+import os
 # Local
 from .f1_calc import F1Calc
 from .encoder import Encoder
@@ -20,11 +22,16 @@ class StanceModule(L.LightningModule):
     def encoder(self) -> Encoder:
         raise NotImplementedError
 
+    def make_visualizer(self, output_dir: os.PathLike) -> Callback:
+        return Callback()
+
     def get_optimizer_params(self):
         return [{"params": self.parameters(), "lr": 4e-5}]
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.get_optimizer_params())
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        return self(**batch)
     def training_step(self, batch, batch_idx):
         # Calls the forward method defined in subclass
         result = self(**batch)
