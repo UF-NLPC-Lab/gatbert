@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional, Literal, List
 import dataclasses
 import pathlib
+import html
 # 3rd Party
 from lightning.pytorch.callbacks import Callback
 import torch_scatter
@@ -178,6 +179,14 @@ class AggModule(StanceModule):
 
             self.html_tokens = []
 
+            self.prefix_len = None
+
+        def get_prefix_length(self, ids):
+            i = 0
+            while i < len(ids) and ids[i] in self.special_ids:
+                i += 1
+            return i
+
         def on_predict_epoch_start(self, trainer, pl_module):
             self.html_tokens.clear()
             self.html_tokens.append("<html><body>")
@@ -196,6 +205,7 @@ class AggModule(StanceModule):
             labels = batch['labels']
 
             batch_size = batch['full']['input_ids'].shape[0]
+            subsample_idx = 0
             for sample_idx in range(batch_size):
                 id_list = batch['full']['input_ids'][sample_idx].cpu().tolist()
                 i = len(id_list) - 1
@@ -206,11 +216,36 @@ class AggModule(StanceModule):
                     i -= 1
                 target_start = i + 1
 
+
                 target_ids = id_list[target_start:target_end]
-                target_str = tokenizer.decode(target_ids)
-
-
+                target_str = html.escape(tokenizer.decode(target_ids))
                 self.html_tokens.append(f'<p> <strong>Target</strong>: {target_str} </p>')
+
+                # Convert to a negative index so we can count from the back
+                # for shorter samples
+                context_end = -(len(id_list) - target_start) - 1
+
+
+                if self.prefix_len is None:
+                    self.prefix_len = self.get_prefix_length(id_list)
+                parent_ids = batch['parent'].tolist()
+                context_toks = []
+                while subsample_idx < len(parent_ids) and parent_ids[subsample_idx] == sample_idx:
+                    subsample_ids = batch['sub']['input_ids'][subsample_idx].cpu().tolist()
+                    i = 0
+                    while i < len(subsample_ids) and subsample_ids[i] in special_ids:
+                        i += 1
+                    context_start = i
+                    while i < len(subsample_ids) and subsample_ids[i] not in special_ids:
+                        i += 1
+                    context_end = i
+                    decoded = tokenizer.decode(subsample_ids[context_start:context_end])
+                    context_toks.append(decoded)
+                    subsample_idx += 1
+                context_str = html.escape("".join(context_toks))
+                self.html_tokens.append(f'<p> <strong>Context</strong>: {context_str} </p>')
+
+
 
         def on_predict_epoch_end(self, trainer, pl_module):
             self.html_tokens.append("</body></html>")
