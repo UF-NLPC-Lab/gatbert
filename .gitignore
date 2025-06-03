@@ -23,6 +23,7 @@ lightning_logs/
 trainer_output/
 lightning_logs/
 
+*.svg
 *.egg-info
 temp/
 *.ckpt
