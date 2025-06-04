@@ -181,8 +181,6 @@ class AggModule(StanceModule):
 
             self.html_tokens = []
 
-            self.prefix_len = None
-
 
         def get_prefix_length(self, ids):
             i = 0
@@ -192,7 +190,9 @@ class AggModule(StanceModule):
 
         def on_predict_epoch_start(self, trainer, pl_module):
             self.html_tokens.clear()
-            self.html_tokens.append("<html><body>")
+            self.html_tokens.append("<html>")
+            self.html_tokens.append("<head><style> .sample_div { border: 1px solid black; } </style></head>")
+            self.html_tokens.append("<body>")
 
         def on_predict_batch_end(self,
                                  trainer,
@@ -203,12 +203,6 @@ class AggModule(StanceModule):
                                  dataloader_idx = 0):
 
             stance_enum = pl_module.stance_enum
-
-            condprob_template = "[" + ','.join([f"P({s.name} |" + "{context})" for s in stance_enum]) + "] = {probs}"
-
-            # fullprob_template =   "[" + ','.join([f"P({s.name} | Full Text)" for s in stance_enum]) + "]"
-            # aggprob_template =    "[" + ','.join([f"P({s.name} | Aggregated)" for s in stance_enum]) + "]"
-
             special_ids = self.special_ids
             tokenizer = self.tokenizer
 
@@ -231,10 +225,7 @@ class AggModule(StanceModule):
 
                 target_ids = id_list[target_start:target_end]
                 target_str = html.escape(tokenizer.decode(target_ids))
-                self.html_tokens.append(f'<p> <strong>Target</strong>: {target_str} </p>')
 
-                if self.prefix_len is None:
-                    self.prefix_len = self.get_prefix_length(id_list)
                 parent_ids = batch['parent'].tolist()
                 context_spans = []
 
@@ -243,7 +234,7 @@ class AggModule(StanceModule):
                 table_toks.append("<table>")
                 table_toks.append("<thead><tr><th>Source</th>")
                 for s in stance_enum:
-                    table_toks.append(f"<th>{s.name}</th>")
+                    table_toks.append(f"<th>P({s.name})</th>")
                 table_toks.append("</tr></thead><tbody>")
 
 
@@ -260,7 +251,7 @@ class AggModule(StanceModule):
                     decoded = tokenizer.decode(subsample_ids[context_start:context_end])
 
                     color = self.colors[color_index]
-                    highlighted = f'<span style="background-color:{color}">{html.escape(decoded)}</span>'
+                    highlighted = f'<span style="background-color:{color}">{html.escape(decoded)}&nbsp;</span>'
 
                     table_toks.append("<tr>")
                     table_toks.append(f'<td style="background-color:{color}">{html.escape(decoded[:15])}&hellip;</td> ')
@@ -272,13 +263,18 @@ class AggModule(StanceModule):
                     subsample_idx += 1
                     color_index = (color_index + 1) % len(self.colors)
 
-                context_str = "".join(context_spans)
                 table_toks.append(f"<tr><td>Full Context</td>{make_prob_cells(fullprobs[sample_idx])}")
                 table_toks.append(f"<tr><td>Recombined  </td>{make_prob_cells( aggprobs[sample_idx])}")
                 table_toks.append("</tbody></table>")
 
+                self.html_tokens.append('<div class="sample_div">')
+                self.html_tokens.append(f'<p> <strong>Target</strong>: {target_str} </p>')
+                context_str = "".join(context_spans)
                 self.html_tokens.append(f'<p> <strong>Context</strong>: {context_str} </p>')
+                self.html_tokens.append(f"<p> <strong>Label</strong>: {stance_enum(int(batch['labels'][sample_idx])).name}")
                 self.html_tokens.extend(table_toks)
+                self.html_tokens.append('</div>')
+
 
 
 
