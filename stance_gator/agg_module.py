@@ -18,6 +18,7 @@ from .models import BertForStance, BertForStanceConfig
 from .encoder import SimpleEncoder, Encoder, keyed_scalar_stack
 from .constants import DEFAULT_MODEL
 from .base_module import StanceModule
+from .dep_tools import get_spans
 
 class AggModule(StanceModule):
 
@@ -122,8 +123,8 @@ class AggModule(StanceModule):
             spacy_doc = pipeline(full_context)
 
             subsample_encodings = []
-            for sent in spacy_doc.sents:
-                sub_sample = Sample(context=str(sent),
+            for (start, end) in get_spans(spacy_doc):
+                sub_sample = Sample(context=str(spacy_doc[start:end]),
                                     target=target,
                                     stance=sample.stance,
                                     is_split_into_words=False,
@@ -131,7 +132,7 @@ class AggModule(StanceModule):
                 subsample_encoding = self.nested.encode(sub_sample)
                 subsample_encoding.pop('labels')
                 subsample_encodings.append(subsample_encoding)
-                span_indices.append( (sent.start, sent.end) )
+                span_indices.append((start, end))
 
             full_encoding = self.nested.encode(sample)
             label = full_encoding.pop('labels')
