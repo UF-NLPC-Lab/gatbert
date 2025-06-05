@@ -39,7 +39,6 @@ class VizDataModule(L.LightningDataModule):
         self.batch_size = batch_size
 
         self.__ds: Dataset = None
-        self.__meta: List[Any] = None
     def setup(self, stage):
         if self.__ds is not None:
             return
@@ -47,22 +46,17 @@ class VizDataModule(L.LightningDataModule):
         parse_iter = tqdm(corpus.parse_fn(corpus.path), desc=f'Parsing {corpus.path}')
 
         encodings = []
-        metadatas = []
 
         for sample in parse_iter:
-            encoding, metadata = self.encoder.encode_with_meta(sample)
+            encoding = self.encoder.encode(sample)
             encodings.append(encoding)
-            metadatas.append(metadata)
         self.__ds = MapDataset(encodings)
-        self.__meta = metadatas
 
     def predict_dataloader(self):
         return DataLoader(self.__ds,
                           batch_size=self.batch_size,
                           collate_fn=self.encoder.collate,
                           shuffle=False)
-    def predict_metadata(self):
-        return list(batched(self.__meta, self.batch_size))
 
 class StanceDataModule(L.LightningDataModule):
     def __init__(self,

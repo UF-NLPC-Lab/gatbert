@@ -1,9 +1,11 @@
 # STL
 from __future__ import annotations
 from typing import Optional, Literal, List
+from itertools import product
 import dataclasses
 import pathlib
 import html
+import enum
 # 3rd Party
 from lightning.pytorch.callbacks import Callback
 import torch_scatter
@@ -25,21 +27,32 @@ class AggModule(StanceModule):
     @dataclasses.dataclass
     class Output:
         full_logits: torch.Tensor
-        agg_logits: torch.Tensor
-        sub_logits: torch.Tensor
+        full_features: torch.Tensor
+        agg_logits: Optional[torch.Tensor] = None
+        sub_logits: Optional[torch.Tensor] = None
 
         @property
         def logits(self):
-            return self.agg_logits
+            return self.agg_logits if self.agg_logits is not None else self.full_logits
 
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
                  classifier_hidden_units: Optional[int] = None,
+                 cont_loss: bool = False,
+                 cl_temp: float = 1.,
+                 cl_weight: float = 1.,
+                 subsamples: bool = False,
+                 subsample_cont_loss: bool = False,
                  agg: Literal['mean'] = 'mean',
                  **parent_kwargs,
                  ):
         super().__init__(**parent_kwargs)
         self.save_hyperparameters()
+        self.cont_loss = cont_loss
+        self.cl_temp = cl_temp
+        self.cl_weight = cl_weight
+        self.subsamples = subsamples
+        self.subsample_cont_loss = subsample_cont_loss
         self.agg = agg
         config = BertForStanceConfig.from_pretrained(pretrained_model,
                                                      classifier_hidden_units=classifier_hidden_units,
@@ -49,7 +62,7 @@ class AggModule(StanceModule):
 
         self.wrapped = BertForStance.from_pretrained(pretrained_model, config=config)
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
-        self.__encoder = AggModule.Encoder(self.tokenizer)
+        self.__encoder = AggModule.Encoder(self)
 
         hidden_size = config.hidden_size
         self.span_ffn = torch.nn.Sequential(
@@ -59,42 +72,65 @@ class AggModule(StanceModule):
             torch.nn.Linear(hidden_size, 2, bias=True),
 
         )
-
+    def _eval_step(self, batch, batch_idx, stage):
+        batch.pop('cl_labels', None)
+        return super()._eval_step(batch, batch_idx, stage)
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
+        cl_labels = batch.pop("cl_labels", None)
         output_obj: AggModule.Output = self(**batch)
 
-
         ce_full = torch.nn.functional.cross_entropy(output_obj.full_logits, labels)
-        ce_agg  = torch.nn.functional.cross_entropy(output_obj.agg_logits, labels)
         self.log("train_ce_full", ce_full)
-        self.log("train_ce_agg", ce_agg)
 
-        # Note this means for backprop purposes, 1 full sample carries the same weight as all its children
-        loss = (ce_full + ce_agg) / 2
+        total_loss = ce_full
 
-        # Alternate weighting scheme
-        # Here, 50-something child samples carry more weight in the average than 8 parent samples
-        # parent_samples = labels.numel()
-        # child_samples = batch['parent'].numel()
-        # loss = (parent_samples * ce_full + child_samples * ce_agg) / (parent_samples + child_samples)
+        if cl_labels is not None:
+            normalized_vecs = output_obj.full_features / torch.norm(output_obj.full_features, p=2, dim=-1, keepdim=True)
+            cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
+            scaled_sims = torch.exp(cosine_sims / self.cl_temp)
+            # Zero out pairs for the same sample
+            diag_mask = torch.eye(scaled_sims.shape[0], dtype=torch.bool, device=scaled_sims.device)
+            scaled_sims = torch.where(diag_mask, 0, scaled_sims)
 
-        self.log("train_ce", loss)
-        return loss
+            pos_pairs = torch.where(cl_labels, scaled_sims, 0.)
+            log_probs = torch.log(torch.sum(pos_pairs, -1) / torch.sum(scaled_sims, -1))
+            cont_loss_val = -torch.mean(log_probs)
+            self.log("train_cl", cont_loss_val)
+            total_loss += self.cl_weight * cont_loss_val
 
-    def forward(self, full, sub, parent, labels=None):
+        if output_obj.agg_logits is not None:
+            ce_agg  = torch.nn.functional.cross_entropy(output_obj.agg_logits, labels)
+            self.log("train_ce_agg", ce_agg)
+            total_loss += ce_agg
+
+        self.log("train_loss", total_loss)
+        return total_loss
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        sub_batch = {k:v for k,v in batch.items() if 'labels' not in k}
+        return super().predict_step(sub_batch, batch_idx, dataloader_idx)
+
+    def forward(self, full, sub=None, parent=None):
 
         full_pass: BertForStance.Output = self.wrapped(**full)
-        sub_pass: BertForStance.Output = self.wrapped(**sub)
+        full_features = full_pass.last_hidden_state[:, 0]
 
-        assert self.agg == 'mean'
-        sub_probs = torch.nn.functional.softmax(sub_pass.logits, dim=-1)
-        agg_probs = torch_scatter.scatter(sub_probs, parent, dim=-2, reduce='mean')
-        agg_log = torch.log(agg_probs) # TODO: Do something more numerically stable
+        sub_log = None
+        agg_log = None
+        if sub is not None:
+            assert parent is not None
+            assert self.agg == 'mean'
+            sub_pass: BertForStance.Output = self.wrapped(**sub)
+            sub_probs = torch.nn.functional.softmax(sub_pass.logits, dim=-1)
+            agg_probs = torch_scatter.scatter(sub_probs, parent, dim=-2, reduce='mean')
+            agg_log = torch.log(agg_probs) # TODO: Do something more numerically stable
+            sub_log = sub_pass.logits
         return AggModule.Output(full_logits=full_pass.logits,
+                                full_features=full_features,
                                 agg_logits=agg_log,
-                                sub_logits=sub_pass.logits)
+                                sub_logits=sub_log)
     @property
     def encoder(self) -> AggModule.Encoder:
         return self.__encoder
@@ -103,11 +139,14 @@ class AggModule(StanceModule):
         return AggModule.Visualizer(output_dir, self.tokenizer)
 
     class Encoder(Encoder):
-        def __init__(self, tokenizer: PreTrainedTokenizerFast):
-            self.tokenizer = tokenizer
-            self.nested = SimpleEncoder(tokenizer, max_context_length=None, max_target_length=None)
+        def __init__(self, module: AggModule):
+            self.module = module
+            self.tokenizer = module.tokenizer
+            self.nested = SimpleEncoder(self.tokenizer, max_context_length=None, max_target_length=None)
 
-        def encode_with_meta(self, sample: Sample):
+        def encode(self, sample: Sample):
+            encode_dict = {}
+
             full_context = " ".join(sample.context) if sample.is_split_into_words else sample.context
             target = " ".join(sample.target) if sample.is_split_into_words else sample.target
             sample = Sample(context=full_context,
@@ -115,6 +154,12 @@ class AggModule(StanceModule):
                             is_split_into_words=False,
                             lang=sample.lang,
                             stance=sample.stance)
+            full_encoding = self.nested.encode(sample)
+            encode_dict["labels"] = full_encoding.pop('labels')
+            encode_dict["full"] = full_encoding
+
+            if not self.module.subsamples:
+                return encode_dict
 
             lang = sample.lang or 'en'
             pipeline = SPACY_PIPES[lang]
@@ -133,38 +178,34 @@ class AggModule(StanceModule):
                 subsample_encoding.pop('labels')
                 subsample_encodings.append(subsample_encoding)
                 span_indices.append((start, end))
-
-            full_encoding = self.nested.encode(sample)
-            label = full_encoding.pop('labels')
-            encode_dict = {
-                "full": full_encoding,
-                "sub": subsample_encodings,
-                "labels": label
-            }
+            encode_dict["sub"] = subsample_encodings
             meta = span_indices
-            return encode_dict, meta
+            return encode_dict
 
         def collate(self, samples: List[TensorDict]):
-            parent_inds = []
-            for i, sample in enumerate(samples):
-                num_subsamples = len(sample['sub'])
-                parent_inds.extend(i for _ in range(num_subsamples))
-            parent_inds = torch.tensor(parent_inds)
+            rdict = {}
+
+            if "sub" in samples[0]:
+                parent_inds = []
+                for i, sample in enumerate(samples):
+                    num_subsamples = len(sample['sub'])
+                    parent_inds.extend(i for _ in range(num_subsamples))
+                parent_inds = torch.tensor(parent_inds)
+                subsample_batch = self.nested.collate([sub_samp for s in samples for sub_samp in s['sub']])
+                rdict.update({"parent": parent_inds, "sub": subsample_batch})
 
             full_batch = self.nested.collate([s['full'] for s in samples])
-            subsample_batch = self.nested.collate([sub_samp for s in samples for sub_samp in s['sub']])
             labels = keyed_scalar_stack(samples, 'labels')
-
-            return {
+            rdict.update({
                 "full": full_batch,
-                "sub": subsample_batch,
                 "labels": labels,
-                "parent": parent_inds
-            }
+            })
 
+            if self.module.cont_loss:
+                rdict['cl_labels'] = torch.unsqueeze(labels, -1) == torch.unsqueeze(labels, 0)
 
-        def encode(self, sample: Sample):
-            return self.encode_with_meta(sample)[0]
+            return rdict
+
 
     @property
     def feature_size(self) -> int:
@@ -202,7 +243,9 @@ class AggModule(StanceModule):
                                  batch,
                                  batch_idx,
                                  dataloader_idx = 0):
-
+            required = [outputs.sub_logits, outputs.agg_logits, batch.get('sub'), batch.get('parent')]
+            if not all(x is not None for x in required):
+                return
             stance_enum = pl_module.stance_enum
             special_ids = self.special_ids
             tokenizer = self.tokenizer

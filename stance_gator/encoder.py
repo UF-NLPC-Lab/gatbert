@@ -19,12 +19,6 @@ class Encoder(abc.ABC):
     def encode(self, sample) -> TensorDict:
         pass
 
-    def encode_with_meta(self, sample) -> Tuple[TensorDict, Any]:
-        """
-        Encode the sample, and also return any metadata useful for viz or evaluation
-        """
-        return self.encode(sample), None
-
     @abc.abstractmethod
     def collate(self, samples: List[TensorDict]) -> TensorDict:
         pass
