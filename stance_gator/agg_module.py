@@ -72,6 +72,10 @@ class AggModule(StanceModule):
             torch.nn.Linear(hidden_size, 2, bias=True),
 
         )
+
+        if self.cont_loss:
+            self.sim_proj = torch.nn.Linear(1, 1)
+
     def _eval_step(self, batch, batch_idx, stage):
         batch.pop('cl_labels', None)
         return super()._eval_step(batch, batch_idx, stage)
@@ -89,14 +93,16 @@ class AggModule(StanceModule):
         if cl_labels is not None:
             normalized_vecs = output_obj.full_features / torch.norm(output_obj.full_features, p=2, dim=-1, keepdim=True)
             cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
-            scaled_sims = torch.exp(cosine_sims / self.cl_temp)
-            # Zero out pairs for the same sample
-            diag_mask = torch.eye(scaled_sims.shape[0], dtype=torch.bool, device=scaled_sims.device)
-            scaled_sims = torch.where(diag_mask, 0, scaled_sims)
+            sim_logits = self.sim_proj(cosine_sims.view(-1, 1))
+            cont_loss_val = torch.nn.functional.binary_cross_entropy_with_logits(sim_logits.flatten(), cl_labels.flatten().to(sim_logits.dtype))
 
-            pos_pairs = torch.where(cl_labels, scaled_sims, 0.)
-            log_probs = torch.log(torch.sum(pos_pairs, -1) / torch.sum(scaled_sims, -1))
-            cont_loss_val = -torch.mean(log_probs)
+            # scaled_sims = torch.exp(cosine_sims / self.cl_temp)
+            # diag_mask = torch.eye(scaled_sims.shape[0], dtype=torch.bool, device=scaled_sims.device)
+            # scaled_sims = torch.where(diag_mask, 0, scaled_sims)
+            # pos_pairs = torch.where(cl_labels, scaled_sims, 0.)
+            # log_probs = torch.log(torch.sum(pos_pairs, -1) / torch.sum(scaled_sims, -1))
+            # cont_loss_val = -torch.mean(log_probs)
+
             self.log("train_cl", cont_loss_val)
             total_loss += self.cl_weight * cont_loss_val
 
