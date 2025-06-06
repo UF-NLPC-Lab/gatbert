@@ -116,10 +116,22 @@ class AggModule(StanceModule):
         total_loss = ce_full
 
         if cl_labels is not None:
-            sim_logits = self.__cal_sim_logits(output_obj.full_features)
-            cont_loss_val = torch.nn.functional.binary_cross_entropy_with_logits(sim_logits.flatten(),
-                                                                                 cl_labels.flatten().to(sim_logits.dtype))
+            # sim_logits = self.__cal_sim_logits(output_obj.full_features)
+            # cont_loss_val = torch.nn.functional.binary_cross_entropy_with_logits(sim_logits.flatten(),
+            #                                                                      cl_labels.flatten().to(sim_logits.dtype))
 
+            vectors = output_obj.full_features
+            normalized_vecs = vectors / torch.norm(vectors, p=2, dim=-1, keepdim=True)
+            cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
+            diag_mask = torch.eye(cosine_sims.shape[0], dtype=torch.bool, device=cosine_sims.device)
+            not_diag = torch.where(torch.logical_not(diag_mask))
+            not_diag_sims = cosine_sims[not_diag]
+            l_vals = torch.where(cl_labels[not_diag], 1 - not_diag_sims, torch.nn.functional.relu(not_diag_sims) )
+            cont_loss_val = torch.mean(l_vals)
+
+            # vectors = output_obj.full_features
+            # normalized_vecs = vectors / torch.norm(vectors, p=2, dim=-1, keepdim=True)
+            # cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
             # scaled_sims = torch.exp(cosine_sims / self.cl_temp)
             # diag_mask = torch.eye(scaled_sims.shape[0], dtype=torch.bool, device=scaled_sims.device)
             # scaled_sims = torch.where(diag_mask, 0, scaled_sims)
@@ -130,7 +142,7 @@ class AggModule(StanceModule):
             self.log("train_cl", cont_loss_val)
             total_loss += self.cl_weight * cont_loss_val
 
-        if output_obj.sub_features is not None and self.sub_cont_loss:
+        if (self.current_epoch >= 1) and output_obj.sub_features is not None and self.sub_cont_loss:
             assert batch['parent'] is not None
             parent_inds = batch['parent']
             with torch.no_grad():
