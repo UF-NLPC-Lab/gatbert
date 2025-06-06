@@ -1,17 +1,15 @@
 # STL
 from __future__ import annotations
 from typing import Optional, Literal, List
-from itertools import product
+import logging
 import dataclasses
 import pathlib
 import html
-import enum
 # 3rd Party
 from lightning.pytorch.callbacks import Callback
 import torch_scatter
 import torch
 from transformers import BertTokenizerFast, PreTrainedTokenizerFast
-from IPython.display import display, HTML
 # Local
 from .types import TensorDict
 from .data import SPACY_PIPES
@@ -24,35 +22,55 @@ from .dep_tools import get_spans
 
 class AggModule(StanceModule):
 
+    LOGGER = logging.getLogger("AggModule")
+
     @dataclasses.dataclass
     class Output:
         full_logits: torch.Tensor
         full_features: torch.Tensor
         agg_logits: Optional[torch.Tensor] = None
         sub_logits: Optional[torch.Tensor] = None
+        sub_features: Optional[torch.Tensor] = None
 
         @property
         def logits(self):
             return self.agg_logits if self.agg_logits is not None else self.full_logits
 
+    @property
+    def cont_loss(self) -> bool:
+        return bool(self.cl_weight)
+    @property
+    def sub_cont_loss(self) -> bool:
+        return bool(self.sub_cl_weight)
+
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
                  classifier_hidden_units: Optional[int] = None,
-                 cont_loss: bool = False,
                  cl_temp: float = 1.,
-                 cl_weight: float = 1.,
+                 cl_weight: float = 0.,
+
                  subsamples: bool = False,
-                 subsample_cont_loss: bool = False,
+                 sub_cl_weight: float = 0.,
+
                  agg: Literal['mean'] = 'mean',
                  **parent_kwargs,
                  ):
         super().__init__(**parent_kwargs)
         self.save_hyperparameters()
-        self.cont_loss = cont_loss
+
+        if sub_cl_weight:
+            self.LOGGER.warning("Setting subsamples = True since sub_cl_weight = %s", sub_cl_weight)
+            subsamples = True
+            if not cl_weight:
+                self.LOGGER.warning("Setting cl_weight = 1. since sub_cl_weight = %s", sub_cl_weight)
+                cl_weight = 1.
+
         self.cl_temp = cl_temp
         self.cl_weight = cl_weight
+
         self.subsamples = subsamples
-        self.subsample_cont_loss = subsample_cont_loss
+        self.sub_cl_weight = sub_cl_weight
+
         self.agg = agg
         config = BertForStanceConfig.from_pretrained(pretrained_model,
                                                      classifier_hidden_units=classifier_hidden_units,
@@ -73,12 +91,19 @@ class AggModule(StanceModule):
 
         )
 
-        if self.cont_loss:
+        if self.cl_weight:
             self.sim_proj = torch.nn.Linear(1, 1)
 
     def _eval_step(self, batch, batch_idx, stage):
         batch.pop('cl_labels', None)
         return super()._eval_step(batch, batch_idx, stage)
+
+    def __cal_sim_logits(self, vectors):
+        normalized_vecs = vectors / torch.norm(vectors, p=2, dim=-1, keepdim=True)
+        cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
+        sim_logits = self.sim_proj(cosine_sims.view(-1, 1))
+        sim_logits = sim_logits.reshape(vectors.shape[0], vectors.shape[0])
+        return sim_logits
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
@@ -91,10 +116,9 @@ class AggModule(StanceModule):
         total_loss = ce_full
 
         if cl_labels is not None:
-            normalized_vecs = output_obj.full_features / torch.norm(output_obj.full_features, p=2, dim=-1, keepdim=True)
-            cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
-            sim_logits = self.sim_proj(cosine_sims.view(-1, 1))
-            cont_loss_val = torch.nn.functional.binary_cross_entropy_with_logits(sim_logits.flatten(), cl_labels.flatten().to(sim_logits.dtype))
+            sim_logits = self.__cal_sim_logits(output_obj.full_features)
+            cont_loss_val = torch.nn.functional.binary_cross_entropy_with_logits(sim_logits.flatten(),
+                                                                                 cl_labels.flatten().to(sim_logits.dtype))
 
             # scaled_sims = torch.exp(cosine_sims / self.cl_temp)
             # diag_mask = torch.eye(scaled_sims.shape[0], dtype=torch.bool, device=scaled_sims.device)
@@ -105,6 +129,34 @@ class AggModule(StanceModule):
 
             self.log("train_cl", cont_loss_val)
             total_loss += self.cl_weight * cont_loss_val
+
+        if output_obj.sub_features is not None and self.sub_cont_loss:
+            assert batch['parent'] is not None
+            parent_inds = batch['parent']
+            with torch.no_grad():
+                # We only want the sim_ffn to be optimized based on labeled full samples,
+                # not these subsamples here. Hence, no gradient for this block
+                sim_logits = self.__cal_sim_logits(output_obj.sub_features)
+                same_parent = torch.unsqueeze(parent_inds, -1) == torch.unsqueeze(parent_inds, 0)
+                sim_probs = torch.where(same_parent,
+                                        torch.nn.functional.sigmoid(sim_logits),
+                                        0.)
+                (source_inds, targ_inds) = torch.where(sim_probs >= 0.5)
+                nonmatching = source_inds != targ_inds
+                # Exclude indices that are just a subsample paired with it itself.
+                # Including those in the KL average is going to bring down our loss value
+                source_inds = source_inds[nonmatching]
+                targ_inds = targ_inds[nonmatching]
+
+            sub_log = output_obj.sub_logits
+            logits_a = sub_log[source_inds]
+            logits_b = sub_log[targ_inds]
+            kl_loss = torch.nn.functional.kl_div(logits_a,
+                                                 logits_b,
+                                                 log_target=True,
+                                                 reduction='batchmean')
+            self.log("train_sub_cl", kl_loss)
+            total_loss += self.sub_cl_weight * kl_loss
 
         if output_obj.agg_logits is not None:
             ce_agg  = torch.nn.functional.cross_entropy(output_obj.agg_logits, labels)
@@ -124,6 +176,7 @@ class AggModule(StanceModule):
         full_features = full_pass.last_hidden_state[:, 0]
 
         sub_log = None
+        sub_features = None
         agg_log = None
         if sub is not None:
             assert parent is not None
@@ -133,8 +186,10 @@ class AggModule(StanceModule):
             agg_probs = torch_scatter.scatter(sub_probs, parent, dim=-2, reduce='mean')
             agg_log = torch.log(agg_probs) # TODO: Do something more numerically stable
             sub_log = sub_pass.logits
+            sub_features = sub_pass.last_hidden_state[:, 0]
         return AggModule.Output(full_logits=full_pass.logits,
                                 full_features=full_features,
+                                sub_features=sub_features,
                                 agg_logits=agg_log,
                                 sub_logits=sub_log)
     @property
@@ -185,7 +240,6 @@ class AggModule(StanceModule):
                 subsample_encodings.append(subsample_encoding)
                 span_indices.append((start, end))
             encode_dict["sub"] = subsample_encodings
-            meta = span_indices
             return encode_dict
 
         def collate(self, samples: List[TensorDict]):
