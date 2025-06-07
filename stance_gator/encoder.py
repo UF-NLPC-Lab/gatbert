@@ -1,5 +1,5 @@
 # STL
-from typing import List, Dict, Iterable
+from typing import List, Dict, Iterable, Tuple, Any
 import abc
 import logging
 # 3rd party
@@ -28,6 +28,11 @@ class SimpleEncoder(Encoder):
         self.__tokenizer = tokenizer
         self.max_context_length = max_context_length
         self.max_target_length = max_target_length
+
+    @property
+    def tokenizer(self):
+        return self.__tokenizer
+
     def encode(self, sample: Sample):
         rdict = encode_text(self.__tokenizer, sample, max_context_length=self.max_context_length, max_target_length=self.max_target_length)
         if sample.stance is not None:
@@ -57,7 +62,6 @@ def encode_text(tokenizer: PreTrainedTokenizerFast,
     target_trunc = tokenizer.decode(tokenizer.encode(sample.target, max_length=max_target_length, add_special_tokens=False), **tokenizer_kwargs)
     combined = tokenizer(text=context_trunc, text_pair=target_trunc, return_tensors='pt', return_special_tokens_mask=True)
     return combined
-
 
 def get_text_masks(special_tokens_mask):
     special_inds = torch.where(special_tokens_mask)[-1]
@@ -94,6 +98,10 @@ def collate_ids(tokenizer: PreTrainedTokenizerFast,
         rdict['position_ids'] = keyed_pad(samples, 'position_ids')
     if 'token_type_ids' in samples[0]:
         rdict['token_type_ids'] = keyed_pad(samples, 'token_type_ids', padding_value=tokenizer.pad_token_type_id)
+    if 'context_mask' in samples[0]:
+        rdict['context_mask'] = keyed_pad(samples, 'context_mask', padding_value=False)
+    if 'target_mask' in samples[0]:
+        rdict['target_mask'] = keyed_pad(samples, 'target_mask', padding_value=False)
     return rdict
 
 def collate_edge_indices(samples: Iterable[torch.Tensor]) -> torch.Tensor:

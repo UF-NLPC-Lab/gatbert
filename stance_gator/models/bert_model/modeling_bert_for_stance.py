@@ -34,6 +34,7 @@ class BertForStance(BertPreTrainedModel):
         loss: Optional[torch.FloatTensor] = None
         logits: Optional[torch.FloatTensor] = None
         seq_encoding: Optional[torch.FloatTensor] = None
+        last_hidden_state: Optional[torch.Tensor] = None
 
 
     def forward(
@@ -65,6 +66,7 @@ class BertForStance(BertPreTrainedModel):
         loss = None
         if labels is not None:
            loss = self.loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-        return BertForStance.Output(loss=loss, logits=logits, seq_encoding=feature_vec)
+        return BertForStance.Output(loss=loss, logits=logits, seq_encoding=feature_vec,
+                                    last_hidden_state=outputs.last_hidden_state)
 
 BertForStance.register_for_auto_class("AutoModel")
