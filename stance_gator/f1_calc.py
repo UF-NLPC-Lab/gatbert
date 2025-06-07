@@ -46,11 +46,11 @@ class F1Calc:
     def summarize(self):
         results = self.__results
         for (label, ind) in self.__label2id.items():
-            results[f'{label}_precision'], results[f'{label}_recall'], results[f'{label}_f1'] = \
+            results[f'class_{label}_precision'], results[f'class_{label}_recall'], results[f'class_{label}_f1'] = \
                 F1Calc.compute_metrics(self.__stats[ind, 0], self.__stats[ind, 1], self.__stats[ind, 3])
         agg_counts = torch.sum(self.__stats, dim=0)
         _, _2, results['micro_f1'] = F1Calc.compute_metrics(agg_counts[0], agg_counts[1], agg_counts[3])
-        results['macro_f1'] = sum(results[f'{label}_f1'] for label in self.__label2id) / len(self.__label2id)
+        results['macro_f1'] = sum(results[f'class_{label}_f1'] for label in self.__label2id) / len(self.__label2id)
         self.__summarized = True
 
     def __stat_func(self, preds, targets):
