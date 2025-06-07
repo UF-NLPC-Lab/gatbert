@@ -21,3 +21,5 @@ dependencies:
     - huggingface_hub[cli]
     - ipykernel
     - ipywidgets
+
+    - nltk

@@ -4,7 +4,7 @@ import json
 import argparse
 import csv
 import os
-from typing import Generator, Callable, Dict, Literal
+from typing import Generator, Callable, Dict, Literal, IO, Iterable
 import pathlib
 from collections import defaultdict
 # 3rd Party
@@ -78,7 +78,35 @@ def parse_xstance(jsonl_path) -> Generator[Sample, None, None]:
             )
     return samples
 
-CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance']
+def parse_standard(tsv_path) -> Generator[Sample, None, None]:
+    stance_types = dict()
+    with open(tsv_path, 'r') as r:
+        reader = csv.DictReader(r)
+        for row in reader:
+            stance_type_name = row["StanceType"]
+            if stance_type_name not in stance_types:
+                stance_types[stance_type_name] = eval(stance_type_name)
+            stance_type = stance_types[stance_type_name]
+            yield Sample(context=row['Context'],
+                         target=row['Target'],
+                         stance=stance_type(row['Stance']),
+                         lang=row['Lang'] if row['Lang'] else None,
+                         is_split_into_words=False)
+
+def write_standard(out_path: os.PathLike, samples: Iterable[Sample]):
+    with open(out_path, 'w') as w:
+        writer = csv.writer(w, delimiter='\t')
+        writer.writerow(["Target", "Context", "Stance", "StanceType", "Lang"])
+        for sample in samples:
+            writer.writerow([
+                sample.target,
+                sample.context,
+                sample.stance,
+                type(sample.stance).__name__,
+                sample.lang]
+            )
+
+CorpusType = Literal['ezstance', 'semeval', 'vast', 'xstance', 'standard']
 
 StanceParser = Callable[[os.PathLike], Generator[Sample, None, None]]
 """
@@ -89,12 +117,13 @@ CORPUS_PARSERS: Dict[CorpusType, StanceParser] = {
     "ezstance": parse_ez_stance,
     "vast": parse_vast,
     "semeval": parse_semeval,
-    "xstance": parse_xstance
+    "xstance": parse_xstance,
+    "standard": parse_standard
 }
 
 def add_corpus_args(parser: argparse.ArgumentParser):
     for name in CORPUS_PARSERS:
-        parser.add_argument(f"--{name}", type=pathlib.Path, metavar="data.(csv|jsonl)")
+        parser.add_argument(f"--{name}", type=pathlib.Path, metavar="data.(csv|jsonl|tsv)")
 
 def get_sample_iter(args) -> Generator[Sample, None, None]:
     found_name = None
