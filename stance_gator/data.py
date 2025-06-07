@@ -81,7 +81,7 @@ def parse_xstance(jsonl_path) -> Generator[Sample, None, None]:
 def parse_standard(tsv_path) -> Generator[Sample, None, None]:
     stance_types = dict()
     with open(tsv_path, 'r') as r:
-        reader = csv.DictReader(r)
+        reader = csv.DictReader(r, delimiter='\t')
         for row in reader:
             stance_type_name = row["StanceType"]
             if stance_type_name not in stance_types:
@@ -89,7 +89,7 @@ def parse_standard(tsv_path) -> Generator[Sample, None, None]:
             stance_type = stance_types[stance_type_name]
             yield Sample(context=row['Context'],
                          target=row['Target'],
-                         stance=stance_type(row['Stance']),
+                         stance=stance_type(int(row['Stance'])),
                          lang=row['Lang'] if row['Lang'] else None,
                          is_split_into_words=False)
 

@@ -15,18 +15,27 @@ from .utils import batched
 class StanceCorpus:
     def __init__(self,
                  path: pathlib.Path,
-                 corpus_type: CorpusType):
+                 corpus_type: CorpusType,
+                 sample_weight: float = 1.):
         if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
-        self.parse_fn = CORPUS_PARSERS[corpus_type]
+        self._parse_fn = CORPUS_PARSERS[corpus_type]
         self.path = path
+        self.sample_weight = sample_weight
+
+    def parse_fn(self, *args, **kwargs):
+        for sample in self._parse_fn(*args, **kwargs):
+            if sample.weight is None:
+                sample.weight = self.sample_weight
+            yield sample
 
 class SplitCorpus(StanceCorpus):
     def __init__(self,
                  path: pathlib.Path,
                  corpus_type: CorpusType,
-                 data_ratio:  Tuple[float, float, float]):
-        super().__init__(path=path, corpus_type=corpus_type)
+                 data_ratio:  Tuple[float, float, float],
+                 sample_weight: float = 1.):
+        super().__init__(path=path, corpus_type=corpus_type, sample_weight=sample_weight)
         self.data_ratio = data_ratio
 
 
