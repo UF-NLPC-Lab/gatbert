@@ -24,10 +24,15 @@ class Encoder(abc.ABC):
         pass
 
 class SimpleEncoder(Encoder):
-    def __init__(self, tokenizer: PreTrainedTokenizerFast, max_context_length=256, max_target_length=64):
+    def __init__(self,
+                 tokenizer: PreTrainedTokenizerFast,
+                 max_context_length=256,
+                 max_target_length=64,
+                 use_weights: bool = False):
         self.__tokenizer = tokenizer
         self.max_context_length = max_context_length
         self.max_target_length = max_target_length
+        self.use_weights = use_weights
 
     @property
     def tokenizer(self):
@@ -37,11 +42,15 @@ class SimpleEncoder(Encoder):
         rdict = encode_text(self.__tokenizer, sample, max_context_length=self.max_context_length, max_target_length=self.max_target_length)
         if sample.stance is not None:
             rdict['labels'] = torch.tensor([sample.stance.value])
+        if self.use_weights:
+            rdict['weights'] = torch.tensor([1.0 if sample.weight is None else sample.weight])
         return rdict
     def collate(self, samples: List[TensorDict]) -> TensorDict:
         rdict= collate_ids(self.__tokenizer, samples, return_attention_mask=True)
         if 'labels' in samples[0]:
             rdict['labels'] = keyed_scalar_stack(samples, 'labels')
+        if 'weights' in samples[0]:
+            rdict['weights'] = keyed_scalar_stack(samples, 'weights')
         return rdict
 
 

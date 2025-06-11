@@ -10,3 +10,4 @@ class Sample:
     stance: BaseStance
     is_split_into_words: bool
     lang: Optional[str] = None
+    weight: Optional[float] = None
