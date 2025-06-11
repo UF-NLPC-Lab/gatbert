@@ -1,4 +1,5 @@
 # STL
+import pickle
 import csv
 from collections import defaultdict
 from typing import Dict, Set, Tuple
@@ -8,6 +9,15 @@ from tqdm import tqdm
 from .data import extract_cn_baseword
 
 class CN:
+
+    @staticmethod
+    def load(assertions_or_pickle_path):
+        try:
+            with open(assertions_or_pickle_path, 'rb') as r:
+                return pickle.load(r)
+        except pickle.UnpicklingError:
+            return CN(assertions_or_pickle_path)
+
     def __init__(self, assertions_path):
         node2id = defaultdict(lambda: len(node2id))
         relation2id = defaultdict(lambda: len(relation2id))
