@@ -3,7 +3,7 @@
 config=$1
 outdir=$2
 name=$3
-n_seeds=${4:-3}
+seeds=${@:3}
 
 if [ ! -f $config ]
 then
@@ -18,7 +18,7 @@ then
     exit 1
 fi
 
-for i in $(seq 1 $n_seeds)
+for i in ${seeds[@]}
 do
     python -m stance_gator.fit_and_test \
         -c $config \
@@ -26,5 +26,4 @@ do
         --trainer.logger.init_args.save_dir $outdir \
         --trainer.logger.init_args.name $name \
         --trainer.logger.init_args.version seed_$i 
-    echo $i
 done
