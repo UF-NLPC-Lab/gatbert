@@ -49,7 +49,9 @@ class VizPredictionCallback(Callback):
 
 
 
-        fullprobs = torch.nn.functional.softmax(outputs.logits, dim=-1).cpu().tolist()
+        prob_dists = torch.nn.functional.softmax(outputs.logits, dim=-1).cpu().tolist()
+        pred_stances = torch.argmax(outputs.logits, dim=-1).cpu().tolist()
+
         batch_size = batch['input_ids'].shape[0]
         for sample_idx in range(batch_size):
             id_list = batch['input_ids'][sample_idx].cpu().tolist()
@@ -73,21 +75,28 @@ class VizPredictionCallback(Callback):
             context_end = i
             context_str = html.escape(tokenizer.decode(id_list[context_start:context_end]))
 
+            label_stance = stance_enum(int(batch['labels'][sample_idx]))
+            pred_stance = stance_enum(int(pred_stances[sample_idx]))
+
             table_toks = []
             table_toks.append("<table>")
             table_toks.append("<thead><tr>")
             for s in stance_enum:
                 table_toks.append(f"<th>P({s.name})</th>")
             table_toks.append("</tr></thead><tbody><tr>")
-            for p in fullprobs[sample_idx]:
-                table_toks.append(f'<td>{p:.3f}</td>')
+            for i, p in enumerate(prob_dists[sample_idx]):
+                if i == pred_stance:
+                    cell_col = 'chartreuse' if pred_stance == label_stance else 'red'
+                    table_toks.append(f'<td style="background-color:{cell_col}">{p:.3f}</td>')
+                else:
+                    table_toks.append(f'<td>{p:.3f}</td>')
             table_toks.append('</tbody></table>')
 
 
             self.html_tokens.append('<div class="sample_div">')
             self.html_tokens.append(f'<p> <strong>Target</strong>: {target_str} </p>')
             self.html_tokens.append(f'<p> <strong>Context</strong>: {context_str} </p>')
-            self.html_tokens.append(f"<p> <strong>Label</strong>: {stance_enum(int(batch['labels'][sample_idx])).name}")
+            self.html_tokens.append(f"<p> <strong>Label</strong>: {label_stance.name}")
             self.html_tokens.extend(table_toks)
             self.html_tokens.append('</div>')
 
