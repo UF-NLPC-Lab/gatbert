@@ -7,6 +7,7 @@ from .models import BertForStance, BertForStanceConfig
 from .encoder import SimpleEncoder
 from .constants import DEFAULT_MODEL
 from .base_module import StanceModule
+from .callbacks import VizPredictionCallback
 
 class BertModule(StanceModule):
     def __init__(self,
@@ -25,6 +26,10 @@ class BertModule(StanceModule):
         self.wrapped = BertForStance.from_pretrained(pretrained_model, config=config)
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
         self.__encoder = SimpleEncoder(self.tokenizer, max_context_length=max_context_length, max_target_length=max_target_length)
+
+    def make_visualizer(self, output_dir):
+        return VizPredictionCallback(output_dir, self.tokenizer)
+
     @property
     def encoder(self):
         return self.__encoder
