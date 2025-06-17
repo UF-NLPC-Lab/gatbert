@@ -26,7 +26,7 @@ def main(raw_args=None):
     )
 
     model = typing.cast(StanceModule, cli.model)
-    model.load_state_dict(torch.load(cli.config.ckpt)['state_dict'])
+    model.load_state_dict(torch.load(cli.config.ckpt)['state_dict'], strict=False)
     datamodule = typing.cast(VizDataModule, cli.datamodule)
 
     out_dir = typing.cast(pathlib.Path, cli.config.o)

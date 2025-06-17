@@ -27,50 +27,25 @@ class AggModule(StanceModule):
     @dataclasses.dataclass
     class Output:
         full_logits: torch.Tensor
-        full_features: torch.Tensor
         agg_logits: Optional[torch.Tensor] = None
         sub_logits: Optional[torch.Tensor] = None
-        sub_features: Optional[torch.Tensor] = None
+        att_weights: Optional[torch.Tensor] = None
 
         @property
         def logits(self):
             return self.agg_logits if self.agg_logits is not None else self.full_logits
 
-    @property
-    def cont_loss(self) -> bool:
-        return bool(self.cl_weight)
-    @property
-    def sub_cont_loss(self) -> bool:
-        return bool(self.sub_cl_weight)
-
     def __init__(self,
                  pretrained_model: str = DEFAULT_MODEL,
                  classifier_hidden_units: Optional[int] = None,
-                 cl_temp: float = 1.,
-                 cl_weight: float = 0.,
-
                  subsamples: bool = False,
-                 sub_cl_weight: float = 0.,
-
-                 agg: Literal['mean'] = 'mean',
+                 agg: Literal['mean', 'att'] = 'mean',
                  **parent_kwargs,
                  ):
         super().__init__(**parent_kwargs)
         self.save_hyperparameters()
 
-        if sub_cl_weight:
-            self.LOGGER.warning("Setting subsamples = True since sub_cl_weight = %s", sub_cl_weight)
-            subsamples = True
-            if not cl_weight:
-                self.LOGGER.warning("Setting cl_weight = 1. since sub_cl_weight = %s", sub_cl_weight)
-                cl_weight = 1.
-
-        self.cl_temp = cl_temp
-        self.cl_weight = cl_weight
-
         self.subsamples = subsamples
-        self.sub_cl_weight = sub_cl_weight
-
         self.agg = agg
         config = BertForStanceConfig.from_pretrained(pretrained_model,
                                                      classifier_hidden_units=classifier_hidden_units,
@@ -82,93 +57,20 @@ class AggModule(StanceModule):
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
         self.__encoder = AggModule.Encoder(self)
 
-        hidden_size = config.hidden_size
-        self.span_ffn = torch.nn.Sequential(
-            torch.nn.Dropout(config.hidden_dropout_prob),
-            torch.nn.Linear(hidden_size, hidden_size, bias=True),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, 2, bias=True),
-
-        )
-
-        if self.cl_weight:
-            self.sim_proj = torch.nn.Linear(1, 1)
-
-    def _eval_step(self, batch, batch_idx, stage):
-        batch.pop('cl_labels', None)
-        return super()._eval_step(batch, batch_idx, stage)
-
-    def __cal_sim_logits(self, vectors):
-        normalized_vecs = vectors / torch.norm(vectors, p=2, dim=-1, keepdim=True)
-        cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
-        sim_logits = self.sim_proj(cosine_sims.view(-1, 1))
-        sim_logits = sim_logits.reshape(vectors.shape[0], vectors.shape[0])
-        return sim_logits
+        if self.agg == 'att':
+            self.att_query = torch.nn.Sequential(
+                torch.nn.Linear(config.hidden_size, 1, bias=False),
+                torch.nn.Flatten(start_dim=-2, end_dim=-1)
+            )
 
     def training_step(self, batch, batch_idx):
         labels = batch.pop('labels')
-        cl_labels = batch.pop("cl_labels", None)
         output_obj: AggModule.Output = self(**batch)
 
         ce_full = torch.nn.functional.cross_entropy(output_obj.full_logits, labels)
         self.log("train_ce_full", ce_full)
 
         total_loss = ce_full
-
-        if cl_labels is not None:
-            # sim_logits = self.__cal_sim_logits(output_obj.full_features)
-            # cont_loss_val = torch.nn.functional.binary_cross_entropy_with_logits(sim_logits.flatten(),
-            #                                                                      cl_labels.flatten().to(sim_logits.dtype))
-
-            vectors = output_obj.full_features
-            normalized_vecs = vectors / torch.norm(vectors, p=2, dim=-1, keepdim=True)
-            cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
-            diag_mask = torch.eye(cosine_sims.shape[0], dtype=torch.bool, device=cosine_sims.device)
-            not_diag = torch.where(torch.logical_not(diag_mask))
-            not_diag_sims = cosine_sims[not_diag]
-            l_vals = torch.where(cl_labels[not_diag], 1 - not_diag_sims, torch.nn.functional.relu(not_diag_sims) )
-            cont_loss_val = torch.mean(l_vals)
-
-            # vectors = output_obj.full_features
-            # normalized_vecs = vectors / torch.norm(vectors, p=2, dim=-1, keepdim=True)
-            # cosine_sims = normalized_vecs @ normalized_vecs.transpose(1, 0)
-            # scaled_sims = torch.exp(cosine_sims / self.cl_temp)
-            # diag_mask = torch.eye(scaled_sims.shape[0], dtype=torch.bool, device=scaled_sims.device)
-            # scaled_sims = torch.where(diag_mask, 0, scaled_sims)
-            # pos_pairs = torch.where(cl_labels, scaled_sims, 0.)
-            # log_probs = torch.log(torch.sum(pos_pairs, -1) / torch.sum(scaled_sims, -1))
-            # cont_loss_val = -torch.mean(log_probs)
-
-            self.log("train_cl", cont_loss_val)
-            total_loss += self.cl_weight * cont_loss_val
-
-        if (self.current_epoch >= 1) and output_obj.sub_features is not None and self.sub_cont_loss:
-            assert batch['parent'] is not None
-            parent_inds = batch['parent']
-            with torch.no_grad():
-                # We only want the sim_ffn to be optimized based on labeled full samples,
-                # not these subsamples here. Hence, no gradient for this block
-                sim_logits = self.__cal_sim_logits(output_obj.sub_features)
-                same_parent = torch.unsqueeze(parent_inds, -1) == torch.unsqueeze(parent_inds, 0)
-                sim_probs = torch.where(same_parent,
-                                        torch.nn.functional.sigmoid(sim_logits),
-                                        0.)
-                (source_inds, targ_inds) = torch.where(sim_probs >= 0.5)
-                nonmatching = source_inds != targ_inds
-                # Exclude indices that are just a subsample paired with it itself.
-                # Including those in the KL average is going to bring down our loss value
-                source_inds = source_inds[nonmatching]
-                targ_inds = targ_inds[nonmatching]
-
-            sub_log = output_obj.sub_logits
-            logits_a = sub_log[source_inds]
-            logits_b = sub_log[targ_inds]
-            kl_loss = torch.nn.functional.kl_div(logits_a,
-                                                 logits_b,
-                                                 log_target=True,
-                                                 reduction='batchmean')
-            self.log("train_sub_cl", kl_loss)
-            total_loss += self.sub_cl_weight * kl_loss
 
         if output_obj.agg_logits is not None:
             ce_agg  = torch.nn.functional.cross_entropy(output_obj.agg_logits, labels)
@@ -183,27 +85,32 @@ class AggModule(StanceModule):
         return super().predict_step(sub_batch, batch_idx, dataloader_idx)
 
     def forward(self, full, sub=None, parent=None):
-
         full_pass: BertForStance.Output = self.wrapped(**full)
-        full_features = full_pass.last_hidden_state[:, 0]
-
         sub_log = None
-        sub_features = None
         agg_log = None
+        att_weights = None
         if sub is not None:
             assert parent is not None
-            assert self.agg == 'mean'
             sub_pass: BertForStance.Output = self.wrapped(**sub)
             sub_probs = torch.nn.functional.softmax(sub_pass.logits, dim=-1)
-            agg_probs = torch_scatter.scatter(sub_probs, parent, dim=-2, reduce='mean')
+            if self.agg == 'mean':
+                agg_probs = torch_scatter.scatter(sub_probs, parent, dim=-2, reduce='mean')
+                parent_counts = torch_scatter.scatter(torch.ones_like(parent), parent, reduce='sum')
+                att_weights = 1. / parent_counts[parent]
+            else:
+                assert self.agg == 'att'
+                att_logits = self.att_query(sub_pass.last_hidden_state[:, 0])
+                exp_att_logits = torch.exp(att_logits)
+                norm_constants = torch_scatter.scatter(exp_att_logits, parent, dim=-1, reduce='sum')
+                att_weights = exp_att_logits / norm_constants[parent]
+                weighted_sub_probs = sub_probs * torch.unsqueeze(att_weights, -1)
+                agg_probs = torch_scatter.scatter(weighted_sub_probs, parent, dim=-2, reduce='sum')
             agg_log = torch.log(agg_probs) # TODO: Do something more numerically stable
             sub_log = sub_pass.logits
-            sub_features = sub_pass.last_hidden_state[:, 0]
         return AggModule.Output(full_logits=full_pass.logits,
-                                full_features=full_features,
-                                sub_features=sub_features,
                                 agg_logits=agg_log,
-                                sub_logits=sub_log)
+                                sub_logits=sub_log,
+                                att_weights=att_weights)
     @property
     def encoder(self) -> AggModule.Encoder:
         return self.__encoder
@@ -273,9 +180,6 @@ class AggModule(StanceModule):
                 "labels": labels,
             })
 
-            if self.module.cont_loss:
-                rdict['cl_labels'] = torch.unsqueeze(labels, -1) == torch.unsqueeze(labels, 0)
-
             return rdict
 
 
@@ -315,7 +219,7 @@ class AggModule(StanceModule):
                                  batch,
                                  batch_idx,
                                  dataloader_idx = 0):
-            required = [outputs.sub_logits, outputs.agg_logits, batch.get('sub'), batch.get('parent')]
+            required = [outputs.sub_logits, outputs.agg_logits, outputs.att_weights, batch.get('sub'), batch.get('parent')]
             if not all(x is not None for x in required):
                 return
             stance_enum = pl_module.stance_enum
@@ -325,6 +229,7 @@ class AggModule(StanceModule):
             fullprobs = torch.nn.functional.softmax(outputs.full_logits, dim=-1).cpu().tolist()
             aggprobs = torch.nn.functional.softmax(outputs.agg_logits, dim=-1).cpu().tolist()
             subprobs = torch.nn.functional.softmax(outputs.sub_logits, dim=-1).cpu().tolist()
+            att_weights = outputs.att_weights.cpu().tolist()
 
             batch_size = batch['full']['input_ids'].shape[0]
             subsample_idx = 0
@@ -351,7 +256,7 @@ class AggModule(StanceModule):
                 table_toks.append("<thead><tr><th>Source</th>")
                 for s in stance_enum:
                     table_toks.append(f"<th>P({s.name})</th>")
-                table_toks.append("</tr></thead><tbody>")
+                table_toks.append("<th>Att. Weight</th></tr></thead><tbody>")
 
 
                 color_index = 0
@@ -372,6 +277,7 @@ class AggModule(StanceModule):
                     table_toks.append("<tr>")
                     table_toks.append(f'<td style="background-color:{color}">{html.escape(decoded[:15])}&hellip;</td> ')
                     table_toks.append(make_prob_cells(subprobs[subsample_idx]))
+                    table_toks.append(f'<td>{att_weights[subsample_idx]:.3f}</td>')
                     table_toks.append("</tr>")
 
 
@@ -379,8 +285,8 @@ class AggModule(StanceModule):
                     subsample_idx += 1
                     color_index = (color_index + 1) % len(self.colors)
 
-                table_toks.append(f"<tr><td>Full Context</td>{make_prob_cells(fullprobs[sample_idx])}")
-                table_toks.append(f"<tr><td>Recombined  </td>{make_prob_cells( aggprobs[sample_idx])}")
+                table_toks.append(f"<tr><td>Full Context</td>{make_prob_cells(fullprobs[sample_idx])}<td></td></tr>")
+                table_toks.append(f"<tr><td>Recombined  </td>{make_prob_cells( aggprobs[sample_idx])}<td></td></tr>")
                 table_toks.append("</tbody></table>")
 
                 self.html_tokens.append('<div class="sample_div">')
