@@ -1,12 +1,47 @@
 # STL
+import json
 import pickle
 import csv
-from collections import defaultdict
+from collections import defaultdict, Counter
 from typing import Dict, Set, Tuple
+import functools
 # 3rd Party
 from tqdm import tqdm
 # Local
 from .data import extract_cn_baseword
+
+@functools.cache
+def load_syn_map(assertions_or_json_path) -> Dict[str, Dict[str, str]]:
+    with open(assertions_or_json_path, 'r') as r:
+        try:
+            return json.load(r)
+        except json.JSONDecodeError:
+            pass
+    adj = defaultdict(lambda: defaultdict(Counter))
+
+    def row_f(row):
+        head, tail = row[2:4]
+        head_comps = head.split('/')
+        tail_comps = tail.split('/')
+        head_lang = head_comps[2]
+        tail_lang = tail_comps[2]
+        head_baseword = extract_cn_baseword(head)
+        tail_baseword = extract_cn_baseword(tail)
+        return head_lang, head_baseword, tail_lang, tail_baseword
+
+    with open(assertions_or_json_path) as r:
+        reader = csv.reader(r, delimiter='\t')
+        rows = filter(lambda row: row[1] == '/r/Synonym', tqdm(reader))
+        rows = map(row_f, rows)
+        rows = filter(lambda row: row[0] != row[2], rows)
+        for (head_lang, head_baseword, tail_lang, tail_baseword) in rows:
+            if head_lang == 'en':
+                adj[tail_lang][head_baseword].update([tail_baseword])
+            elif tail_lang == 'en':
+                adj[head_lang][tail_baseword].update([head_baseword])
+    adj = {k:{k2:c.most_common(1)[0][0] for k2,c in v.items()} for k,v in tqdm(adj.items())}
+    return adj
+ 
 
 class CN:
 

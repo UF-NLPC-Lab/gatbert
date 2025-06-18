@@ -1,32 +1,69 @@
 # STL
 from __future__ import annotations
+import copy
+import functools
 # 3rd Party
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 import lightning as L
 from tqdm import tqdm
 import pathlib
-# Local
 from typing import Any, Tuple, List, Tuple
+# Local
+from .sample import Sample
 from .encoder import Encoder
-from .data import MapDataset, CORPUS_PARSERS, CorpusType
+from .data import MapDataset, CORPUS_PARSERS, CorpusType, SPACY_PIPES
 from .constants import DEFAULT_BATCH_SIZE
 from .utils import batched
+from .cn import load_syn_map
+
+class Transform:
+    def __call__(self, sample: Sample) -> Sample:
+        raise NotImplementedError
+
+class SynTransform(Transform):
+    def __init__(self, syn_path: pathlib.Path):
+        self.adj = load_syn_map(syn_path)
+        self.en_pipe = SPACY_PIPES['en']
+
+    @functools.lru_cache
+    def __syn_lookup(self, target: str, lang: str):
+        spacy_doc = self.en_pipe(target.lower())
+        rval = []
+        for tok in spacy_doc:
+            lemma = tok.lemma_
+            rval.append(self.adj.get(lang, {}).get(lemma, lemma))
+        return " ".join(rval)
+
+    def __call__(self, sample: Sample) -> Sample:
+        lang = sample.lang or 'en'
+        if lang == 'en':
+            return sample
+        cp = copy.copy(sample)
+        if cp.is_split_into_words:
+            cp.context = " ".join(cp.context)
+            cp.target = " ".join(cp.target)
+            cp.is_split_into_words = False
+        cp.target = self.__syn_lookup(cp.target, lang)
+        return cp
 
 class StanceCorpus:
     def __init__(self,
                  path: pathlib.Path,
                  corpus_type: CorpusType,
-                 sample_weight: float = 1.):
+                 sample_weight: float = 1.,
+                 transforms: List[Transform] = []):
         if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         self._parse_fn = CORPUS_PARSERS[corpus_type]
         self.path = path
         self.sample_weight = sample_weight
+        self.transforms = transforms
 
     def parse_fn(self, *args, **kwargs):
         for sample in self._parse_fn(*args, **kwargs):
             if sample.weight is None:
                 sample.weight = self.sample_weight
+            sample = functools.reduce(lambda s, f: f(s), self.transforms, sample)
             yield sample
 
 class SplitCorpus(StanceCorpus):
@@ -34,8 +71,9 @@ class SplitCorpus(StanceCorpus):
                  path: pathlib.Path,
                  corpus_type: CorpusType,
                  data_ratio:  Tuple[float, float, float],
-                 sample_weight: float = 1.):
-        super().__init__(path=path, corpus_type=corpus_type, sample_weight=sample_weight)
+                 sample_weight: float = 1.,
+                 transforms: List[Transform] = []):
+        super().__init__(path=path, corpus_type=corpus_type, sample_weight=sample_weight, transforms=transforms)
         self.data_ratio = data_ratio
 
 
