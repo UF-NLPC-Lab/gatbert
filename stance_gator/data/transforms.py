@@ -1,7 +1,7 @@
 import functools
 import pathlib
 
-from .stance import BaseStance, TriStance, BiStance
+from .stance import BaseStance, TriStance, BiStance, STANCE_TYPE_MAP, StanceType
 from .sample import Sample
 from .spacy_utils import SPACY_PIPES
 from .cn import load_syn_map
@@ -11,8 +11,8 @@ class Transform:
         raise NotImplementedError
 
 class LabelTransform(Transform):
-    def __init__(self, target_type: type[BaseStance]):
-        self.target_type = target_type
+    def __init__(self, target_type: StanceType):
+        self.target_type = STANCE_TYPE_MAP[target_type]
     def __call__(self, sample: Sample) -> Sample:
         if isinstance(sample.stance, self.target_type):
             return sample
