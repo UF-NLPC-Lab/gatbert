@@ -1,1 +1,2 @@
 from .viz_prediction import VizPredictionCallback
+from .stats_callback import StatsCallback

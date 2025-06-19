@@ -40,6 +40,8 @@ class VizDataModule(L.LightningDataModule):
                           batch_size=self.batch_size,
                           collate_fn=self.encoder.collate,
                           shuffle=False)
+    def test_dataloader(self):
+        return self.predict_dataloader()
 
 class SplitDataModule(L.LightningDataModule):
     def __init__(self,

@@ -3,6 +3,7 @@ from lightning.pytorch.cli import LightningCLI
 # Local
 from .modules import *
 from .data import *
+from .callbacks import StatsCallback
 
 class StanceCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
@@ -11,6 +12,7 @@ class StanceCLI(LightningCLI):
         """
     def after_instantiate_classes(self):
         self.datamodule.encoder = self.model.encoder
+        self.trainer.callbacks.append(StatsCallback(self.model.stance_enum.label2id()))
 
 def cli_main(**cli_kwargs):
     return StanceCLI(

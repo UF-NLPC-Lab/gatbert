@@ -6,7 +6,6 @@ from lightning.pytorch.callbacks import Callback
 import typing
 import os
 # Local
-from ..f1_calc import F1Calc
 from ..data import Encoder, StanceType, STANCE_TYPE_MAP
 from ..output import StanceOutput
 
@@ -14,7 +13,6 @@ class StanceModule(L.LightningModule):
     def __init__(self, stance_type: StanceType = 'tri'):
         super().__init__()
         self.stance_enum = STANCE_TYPE_MAP[stance_type]
-        self._calc = F1Calc(self.stance_enum.label2id())
 
     @property
     @abc.abstractmethod
@@ -38,32 +36,11 @@ class StanceModule(L.LightningModule):
         self.log("loss", loss)
         return loss
     def validation_step(self, batch, batch_idx):
-        self._eval_step(batch, batch_idx, 'val')
+        return self._eval_step(batch, batch_idx, 'val')
     def test_step(self, batch, batch_idx):
-        self._eval_step(batch, batch_idx, 'test')
-    def on_validation_epoch_end(self):
-        self.__eval_finish('val')
-    def on_test_epoch_end(self):
-        self.__eval_finish('test')
-
-
+        return self._eval_step(batch, batch_idx, 'test')
     def _eval_step(self, batch, batch_idx, stage):
-        labels = batch.pop('labels').view(-1)
-        rval = self(**batch)
-        logits = typing.cast(StanceOutput, rval).logits
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        self._calc.record(probs, labels)
-
-    def __eval_finish(self, stage):
-        self.__log_stats(self._calc, f"{stage}")
-    def __log_stats(self, calc: F1Calc, prefix):
-        calc.summarize()
-        for class_name in self.stance_enum.label2id():
-            k = f'class_{class_name}_f1'
-            self.log(f'{prefix}_{k}', calc.results[k])
-        self.log(f'{prefix}_micro_f1', calc.results['micro_f1'])
-        self.log(f'{prefix}_macro_f1', calc.results['macro_f1'])
-        calc.reset()
+        return self(**batch)
 
     # FIXME: Figure out the more standard way to do this
     def on_train_epoch_start(self):

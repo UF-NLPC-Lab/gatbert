@@ -4,6 +4,7 @@ import pathlib
 import torch
 from lightning.pytorch.cli import LightningArgumentParser
 # Local
+from .callbacks import StatsCallback
 from .cli import StanceCLI
 from .modules import StanceModule
 from .data import VizDataModule
@@ -17,7 +18,7 @@ class VizCLI(StanceCLI):
 def main(raw_args=None):
     cli = VizCLI(
         model_class=StanceModule, subclass_mode_model=True,
-        datamodule_class=VizDataModule, subclass_mode_data=True,
+        datamodule_class=VizDataModule, subclass_mode_data=False,
         seed_everything_default=0,
         run=False,
         trainer_defaults={
@@ -31,8 +32,10 @@ def main(raw_args=None):
 
     out_dir = typing.cast(pathlib.Path, cli.config.o)
     out_dir.mkdir(exist_ok=True)
+
+    cli.trainer.callbacks.append(StatsCallback(model.stance_enum.label2id(), out_dir.joinpath("predictions.csv")))
     cli.trainer.callbacks.append(model.make_visualizer(out_dir))
-    predictions = cli.trainer.predict(model, datamodule)
+    cli.trainer.test(model, datamodule)
 
 
 
