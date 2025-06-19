@@ -52,12 +52,15 @@ class StatsCallback(Callback):
         self.__stats = torch.zeros((len(self.__label2id), 5), dtype=torch.int)
         self.__results = dict()
         self.__summarized = False
+        self.__res_file = None
+        self.__writer = None
 
     @property
     def results(self):
         return self.__results
 
-
+    def on_validation_epoch_start(self, trainer, pl_module):
+        self.reset()
     def on_test_epoch_start(self, trainer, pl_module):
         self.reset()
         if self.__results_path is not None:
@@ -65,24 +68,28 @@ class StatsCallback(Callback):
             self.__writer = csv.writer(self.__res_file)
             self.__writer.writerow(["pred", "label"])
 
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
+        return self._on_batch_end(trainer, pl_module, outputs, batch, batch_idx, dataloader_idx)
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
+        return self._on_batch_end(trainer, pl_module, outputs, batch, batch_idx, dataloader_idx)
+    def _on_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx = 0):
         labels = batch['labels']
         # FIXME: support preds, not just logits
         logits = outputs.logits
         preds = torch.argmax(logits, dim=-1)
         self.record(preds, labels)
-
         if self.__writer is not None:
             preds = preds.detach().cpu().tolist()
             labels = labels.detach().cpu().tolist()
             self.__writer.writerows(zip(preds, labels))
 
+    def on_validation_epoch_end(self, trainer, pl_module):
+        return self._on_epoch_end(trainer, pl_module, "val")
     def on_test_epoch_end(self, trainer, pl_module):
         rval = self._on_epoch_end(trainer, pl_module, "test")
         if self.__res_file is not None:
             self.__res_file.close()
         return rval
-
     def _on_epoch_end(self, trainer, pl_module: L.LightningModule, stage):
         results = {}
         for (label, ind) in self.__label2id.items():
@@ -93,7 +100,5 @@ class StatsCallback(Callback):
         results['macro_f1'] = sum(results[f'class_{label}_f1'] for label in self.__label2id) / len(self.__label2id)
         results = {f"{stage}_{k}":v for k,v in results.items()}
         self.__results = results
-
-        if stage != 'predict':
-            for (k, v) in self.__results.items():
-                pl_module.log(k, v, on_step=False, on_epoch=True)
+        for (k, v) in self.__results.items():
+            pl_module.log(k, v, on_step=False, on_epoch=True)
