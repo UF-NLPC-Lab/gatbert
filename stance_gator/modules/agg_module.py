@@ -12,11 +12,10 @@ import torch
 from transformers import BertTokenizerFast, PreTrainedTokenizerFast
 # Local
 from ..types import TensorDict
-from ..data import SPACY_PIPES, Sample, SimpleEncoder, Encoder, keyed_scalar_stack
+from ..data import SPACY_PIPES, Sample, SimpleEncoder, Encoder, keyed_scalar_stack, get_spans
 from ..models import BertForStance, BertForStanceConfig
 from ..constants import DEFAULT_MODEL
 from .base_module import StanceModule
-from ..dep_tools import get_spans
 
 class AggModule(StanceModule):
 
