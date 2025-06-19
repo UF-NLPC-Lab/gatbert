@@ -3,11 +3,11 @@ from typing import Optional
 # 3rd Party
 from transformers import BertTokenizerFast
 # Local
-from .models import BertForStance, BertForStanceConfig
-from .encoder import SimpleEncoder
-from .constants import DEFAULT_MODEL
+from ..models import BertForStance, BertForStanceConfig
+from ..encoder import SimpleEncoder
+from ..constants import DEFAULT_MODEL
 from .base_module import StanceModule
-from .callbacks import VizPredictionCallback
+from ..callbacks import VizPredictionCallback
 
 class BertModule(StanceModule):
     def __init__(self,

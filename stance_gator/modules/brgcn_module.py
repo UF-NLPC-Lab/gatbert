@@ -5,8 +5,8 @@ from typing import Optional
 from transformers import BertModel, BertTokenizerFast
 # Local
 from .base_module import StanceModule
-from .constants import DEFAULT_MODEL
-from .encoder import SimpleEncoder
+from ..constants import DEFAULT_MODEL
+from ..encoder import SimpleEncoder
 
 class BrgcnModule(StanceModule):
     def __init__(self,

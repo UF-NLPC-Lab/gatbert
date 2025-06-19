@@ -6,10 +6,10 @@ from lightning.pytorch.callbacks import Callback
 import typing
 import os
 # Local
-from .f1_calc import F1Calc
-from .encoder import Encoder
-from .output import StanceOutput
-from .constants import StanceType, STANCE_TYPE_MAP
+from ..f1_calc import F1Calc
+from ..encoder import Encoder
+from ..output import StanceOutput
+from ..constants import StanceType, STANCE_TYPE_MAP
 
 class StanceModule(L.LightningModule):
     def __init__(self, stance_type: StanceType = 'tri'):

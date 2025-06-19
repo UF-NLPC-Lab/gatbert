@@ -1,8 +1,6 @@
 # 3rd Party
 from lightning.pytorch.cli import LightningCLI
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 # Local
-from .base_module import StanceModule
 from .modules import *
 from .data_modules import *
 
