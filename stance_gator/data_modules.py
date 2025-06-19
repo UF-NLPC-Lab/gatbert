@@ -20,6 +20,14 @@ class Transform:
     def __call__(self, sample: Sample) -> Sample:
         raise NotImplementedError
 
+class ReweightTransform(Transform):
+    def __init__(self, new_weight: float):
+        self.new_weight = new_weight
+    def __call__(self, sample: Sample) -> Sample:
+        cp = copy.copy(sample)
+        cp.weight = self.new_weight
+        return cp
+
 class SynTransform(Transform):
     def __init__(self, syn_path: pathlib.Path):
         self.adj = load_syn_map(syn_path)
@@ -50,32 +58,17 @@ class StanceCorpus:
     def __init__(self,
                  path: pathlib.Path,
                  corpus_type: CorpusType,
-                 sample_weight: float = 1.,
                  transforms: List[Transform] = []):
         if corpus_type not in CORPUS_PARSERS:
             raise ValueError(f"Invalid corpus_type {corpus_type}")
         self._parse_fn = CORPUS_PARSERS[corpus_type]
         self.path = path
-        self.sample_weight = sample_weight
         self.transforms = transforms
 
     def parse_fn(self, *args, **kwargs):
         for sample in self._parse_fn(*args, **kwargs):
-            if sample.weight is None:
-                sample.weight = self.sample_weight
             sample = functools.reduce(lambda s, f: f(s), self.transforms, sample)
             yield sample
-
-class SplitCorpus(StanceCorpus):
-    def __init__(self,
-                 path: pathlib.Path,
-                 corpus_type: CorpusType,
-                 data_ratio:  Tuple[float, float, float],
-                 sample_weight: float = 1.,
-                 transforms: List[Transform] = []):
-        super().__init__(path=path, corpus_type=corpus_type, sample_weight=sample_weight, transforms=transforms)
-        self.data_ratio = data_ratio
-
 
 class VizDataModule(L.LightningDataModule):
     def __init__(self, corpus: StanceCorpus, batch_size: int = DEFAULT_BATCH_SIZE):
@@ -105,9 +98,10 @@ class VizDataModule(L.LightningDataModule):
                           collate_fn=self.encoder.collate,
                           shuffle=False)
 
-class StanceDataModule(L.LightningDataModule):
+class SplitDataModule(L.LightningDataModule):
     def __init__(self,
-                 corpora: List[SplitCorpus],
+                 corpora: List[StanceCorpus],
+                 ratios: List[Tuple[float, float, float]],
                  batch_size: int = DEFAULT_BATCH_SIZE
                 ):
         super().__init__()
@@ -115,6 +109,8 @@ class StanceDataModule(L.LightningDataModule):
         self.encoder: Encoder = None
         self.batch_size = batch_size
         self._corpora = corpora
+        self._ratios = ratios
+        assert len(self._corpora) == len(self._ratios)
         self.__train_ds: Dataset = None
         self.__val_ds: Dataset = None
         self.__test_ds: Dataset = None
@@ -127,11 +123,11 @@ class StanceDataModule(L.LightningDataModule):
         train_dses = []
         val_dses = []
         test_dses = []
-        for corpus in self._corpora:
+        for corpus, data_ratio in zip(self._corpora, self._ratios):
             parse_iter = tqdm(corpus.parse_fn(corpus.path), desc=f"Parsing {corpus.path}")
             encoded = MapDataset(map(self.encoder.encode, parse_iter))
             train_ds, val_ds, test_ds = \
-                random_split(encoded, corpus.data_ratio)
+                random_split(encoded, data_ratio)
             train_dses.append(train_ds)
             val_dses.append(val_ds)
             test_dses.append(test_ds)

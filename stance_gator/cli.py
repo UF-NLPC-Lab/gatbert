@@ -17,7 +17,7 @@ class StanceCLI(LightningCLI):
 def cli_main(**cli_kwargs):
     return StanceCLI(
         model_class=StanceModule, subclass_mode_model=True,
-        datamodule_class=StanceDataModule, subclass_mode_data=True,
+        datamodule_class=SplitDataModule, subclass_mode_data=False,
         trainer_defaults={
             "max_epochs": 1000,
             "deterministic": True
