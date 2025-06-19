@@ -36,9 +36,9 @@ class BaseStance(enum.IntEnum):
 
 @enum.unique
 class TriStance(BaseStance):
-    neutral = 0
-    against = 1
-    favor = 2
+    against = 0
+    favor = 1
+    neutral = 2
 
 @enum.unique
 class BiStance(BaseStance):
