@@ -12,10 +12,8 @@ import torch
 from transformers import BertTokenizerFast, PreTrainedTokenizerFast
 # Local
 from ..types import TensorDict
-from ..data import SPACY_PIPES
-from ..sample import Sample
+from ..data import SPACY_PIPES, Sample, SimpleEncoder, Encoder, keyed_scalar_stack
 from ..models import BertForStance, BertForStanceConfig
-from ..encoder import SimpleEncoder, Encoder, keyed_scalar_stack
 from ..constants import DEFAULT_MODEL
 from .base_module import StanceModule
 from ..dep_tools import get_spans

@@ -1,17 +1,14 @@
 # STL
-from typing import List, Dict, Iterable, Tuple, Any
+from typing import List, Dict, Iterable
 import abc
-import logging
 # 3rd party
 import torch
 from transformers import PreTrainedTokenizerFast
 # Local
-from .types import TensorDict
+from ..types import TensorDict
 from .sample import Sample
 
 PoolIndices = Dict[int, List[int]]
-
-__LOGGER = logging.getLogger("Encoder")
 
 class Encoder(abc.ABC):
 

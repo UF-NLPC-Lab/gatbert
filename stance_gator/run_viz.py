@@ -5,8 +5,8 @@ import torch
 from lightning.pytorch.cli import LightningArgumentParser
 # Local
 from .cli import StanceCLI
-from .base_module import StanceModule
-from .data_modules import VizDataModule
+from .modules import StanceModule
+from .data import VizDataModule
 
 class VizCLI(StanceCLI):
     def add_arguments_to_parser(self, parser: LightningArgumentParser):

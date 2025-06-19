@@ -3,7 +3,7 @@ from typing import Optional
 # 3rd Party
 from transformers import BartTokenizerFast
 # Local
-from ..encoder import SimpleEncoder
+from ..data import SimpleEncoder
 from .base_module import StanceModule
 from ..models import BartEncForStance, BartEncForStanceConfig
 

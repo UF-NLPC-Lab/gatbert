@@ -1,0 +1,63 @@
+import functools
+import pathlib
+
+from .stance import BaseStance, TriStance, BiStance
+from .sample import Sample
+from .spacy_utils import SPACY_PIPES
+from .cn import load_syn_map
+
+class Transform:
+    def __call__(self, sample: Sample) -> Sample:
+        raise NotImplementedError
+
+class LabelTransform(Transform):
+    def __init__(self, target_type: type[BaseStance]):
+        self.target_type = target_type
+    def __call__(self, sample: Sample) -> Sample:
+        if isinstance(sample.stance, self.target_type):
+            return sample
+        if not isinstance(sample.stance, BaseStance):
+            raise ValueError(f"Invalid stance type {type(sample.stance)}")
+        stance_val = sample.stance
+        if self.target_type is BiStance:
+            assert isinstance(stance_val, TriStance)
+            if sample == TriStance.neutral:
+                raise ValueError(f"Cannot convert a neutral stance to BiStance")
+            sample.stance = self.target_type(stance_val.value)
+        else:
+            assert self.target_type is TriStance
+            assert isinstance(stance_val, BiStance)
+            sample.stance = self.target_type(stance_val.value)
+        return sample
+
+class ReweightTransform(Transform):
+    def __init__(self, new_weight: float):
+        self.new_weight = new_weight
+    def __call__(self, sample: Sample) -> Sample:
+        sample.weight = self.new_weight
+        return sample
+
+class SynTransform(Transform):
+    def __init__(self, syn_path: pathlib.Path):
+        self.adj = load_syn_map(syn_path)
+        self.en_pipe = SPACY_PIPES['en']
+
+    @functools.lru_cache
+    def __syn_lookup(self, target: str, lang: str):
+        spacy_doc = self.en_pipe(target.lower())
+        rval = []
+        for tok in spacy_doc:
+            lemma = tok.lemma_
+            rval.append(self.adj.get(lang, {}).get(lemma, lemma))
+        return " ".join(rval)
+
+    def __call__(self, sample: Sample) -> Sample:
+        lang = sample.lang or 'en'
+        if lang == 'en':
+            return sample
+        if sample.is_split_into_words:
+            sample.context = " ".join(sample.context)
+            sample.target = " ".join(sample.target)
+            sample.is_split_into_words = False
+        sample.target = self.__syn_lookup(sample.target, lang)
+        return sample

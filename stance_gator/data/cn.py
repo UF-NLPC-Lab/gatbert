@@ -7,8 +7,16 @@ from typing import Dict, Set, Tuple
 import functools
 # 3rd Party
 from tqdm import tqdm
-# Local
-from .data import extract_cn_baseword
+
+def extract_cn_baseword(uri: str):
+    if uri.startswith('/'):
+        return uri.split('/')[3]
+    return "_".join(uri.split())
+
+def pretokenize_cn_uri(uri: str):
+    if uri.startswith('/'):
+        return uri.split('/')[3].split('_')
+    return uri.split()
 
 @functools.cache
 def load_syn_map(assertions_or_json_path) -> Dict[str, Dict[str, str]]:

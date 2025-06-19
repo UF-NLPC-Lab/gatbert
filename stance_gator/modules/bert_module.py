@@ -4,7 +4,7 @@ from typing import Optional
 from transformers import BertTokenizerFast
 # Local
 from ..models import BertForStance, BertForStanceConfig
-from ..encoder import SimpleEncoder
+from ..data import SimpleEncoder
 from ..constants import DEFAULT_MODEL
 from .base_module import StanceModule
 from ..callbacks import VizPredictionCallback

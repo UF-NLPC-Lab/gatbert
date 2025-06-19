@@ -1,7 +1,7 @@
 import dataclasses
 from typing import List, Optional
 # Local
-from .constants import BaseStance
+from .stance import BaseStance
 
 @dataclasses.dataclass
 class Sample:

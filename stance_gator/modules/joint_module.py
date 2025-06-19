@@ -6,9 +6,8 @@ from transformers import BertModel, BertTokenizerFast
 import torch_geometric.data
 # Local
 from .base_module import StanceModule
-from ..cn import CN
 from ..constants import DEFAULT_MODEL
-from ..encoder import SimpleEncoder, Encoder, keyed_scalar_stack
+from ..data import SimpleEncoder, Encoder, keyed_scalar_stack, CN
 from ..rgcn import CNEncoder, text2edges, make_graph_sample
 
 class JointModule(StanceModule):

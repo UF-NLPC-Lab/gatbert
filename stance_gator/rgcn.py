@@ -12,10 +12,8 @@ import torch_geometric.loader
 import lightning as L
 import torch_scatter
 # Local
-from .sample import Sample
-from .cn import CN
 from .utils import batched
-from .data import SPACY_PIPES, extract_lemmas
+from .data import SPACY_PIPES, extract_lemmas, Sample, CN
 
 class RGCN(torch.nn.Module):
     def __init__(self,

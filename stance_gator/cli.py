@@ -2,7 +2,7 @@
 from lightning.pytorch.cli import LightningCLI
 # Local
 from .modules import *
-from .data_modules import *
+from .data import *
 
 class StanceCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
