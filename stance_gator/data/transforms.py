@@ -1,5 +1,6 @@
 import functools
 import pathlib
+from typing import Optional
 
 from .stance import BaseStance, TriStance, BiStance, STANCE_TYPE_MAP, StanceType
 from .sample import Sample
@@ -9,6 +10,28 @@ from .cn import load_syn_map
 class Transform:
     def __call__(self, sample: Sample) -> Sample:
         raise NotImplementedError
+
+class ClassWeightTransform(Transform):
+    def __init__(self,
+                 favor: Optional[float] = None,
+                 against: Optional[float] = None,
+                 neutral: Optional[float] = None
+                 ):
+        self.favor = favor
+        self.against = against
+        self.neutral = neutral
+    def __call__(self, sample: Sample) -> Sample:
+        stance_name = sample.stance.name
+        if stance_name == 'favor':
+            if self.favor is not None:
+                sample.weight = self.favor
+        elif stance_name == 'against':
+            if self.against is not None:
+                sample.weight = self.against
+        elif stance_name == 'neutral':
+            if self.neutral is not None:
+                sample.weight = self.neutral
+        return sample
 
 class LabelTransform(Transform):
     def __init__(self, target_type: StanceType):

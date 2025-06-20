@@ -25,7 +25,10 @@ class BertModule(StanceModule):
                                                      )
         self.wrapped = BertForStance.from_pretrained(pretrained_model, config=config)
         self.tokenizer: BertTokenizerFast = BertTokenizerFast.from_pretrained(pretrained_model)
-        self.__encoder = SimpleEncoder(self.tokenizer, max_context_length=max_context_length, max_target_length=max_target_length)
+        self.__encoder = SimpleEncoder(self.tokenizer,
+                                       max_context_length=max_context_length,
+                                       max_target_length=max_target_length,
+                                       use_weights=True)
 
     def make_visualizer(self, output_dir):
         return VizPredictionCallback(output_dir, self.tokenizer)

@@ -47,6 +47,7 @@ class BertForStance(BertPreTrainedModel):
          inputs_embeds: Optional[torch.Tensor] = None,
          labels: Optional[torch.Tensor] = None,
          return_dict: Optional[bool] = None,
+         weights: Optional[torch.Tensor] = None
      ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -65,7 +66,11 @@ class BertForStance(BertPreTrainedModel):
         logits = self.classifier(feature_vec)
         loss = None
         if labels is not None:
-           loss = self.loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            if weights is not None:
+                l_vals = torch.nn.functional.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1), reduction='none')
+                loss = torch.mean(weights * l_vals)
+            else:
+                loss = self.loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
         return BertForStance.Output(loss=loss, logits=logits, seq_encoding=feature_vec,
                                     last_hidden_state=outputs.last_hidden_state)
 
