@@ -66,7 +66,7 @@ class RnnModule(StanceModule):
             rel_logits = torch.stack([rel_prev, rel_t], dim=-1)
             rel_dist = torch.nn.functional.softmax(rel_logits, dim=-1)
 
-            dist_hat = self.classifier(h_t)
+            dist_hat = torch.nn.functional.softmax(self.classifier(h_t), dim=-1)
             dist_t = dist_prev * rel_dist[:, [0]] + dist_hat * rel_dist[:, [1]]
             dist_history.append(dist_t)
 
