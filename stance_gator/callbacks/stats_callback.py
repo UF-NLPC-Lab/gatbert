@@ -100,5 +100,5 @@ class StatsCallback(Callback):
         results['macro_f1'] = sum(results[f'class_{label}_f1'] for label in self.__label2id) / len(self.__label2id)
         results = {f"{stage}_{k}":v for k,v in results.items()}
         self.__results = results
-        for (k, v) in self.__results.items():
+        for (k, v) in filter(lambda pair: pair[0].endswith('f1'), self.__results.items()):
             pl_module.log(k, v, on_step=False, on_epoch=True)
